@@ -69,7 +69,7 @@ ctest --preset msvc
 ## 사용법
 
 ```
-cpu-bench-runner info                       # CPU, 코어 구성, 캐시
+cpu-bench-runner info                       # CPU, 코어 구성, 캐시, 메모리(슬롯·채널·속도)
 cpu-bench-runner run int                    # 싱글 스레드 (성능 코어 고정)
 cpu-bench-runner run int --mt               # 모든 논리 코어
 cpu-bench-runner run int --threads 4 --duration-ms 3000 --runs 7 --json
@@ -95,4 +95,4 @@ cpu-bench-runner sweep mem --workload latency   # 16 KiB → 512 MiB 지연 곡�
 
 ## 개인정보
 
-러너는 아무것도 전송하지 않습니다. 결과 업로드 기능이 생기더라도 시리얼 번호, 컴퓨터 이름, 계정명, IP는 수집하지 않고, 보내기 전에 전송 내용을 보여 주고 동의를 받을 예정입니다.
+러너는 아무것도 전송하지 않습니다. `info`의 메모리 정보는 SMBIOS에서 읽는데, 모듈의 시리얼 번호와 자산 태그는 읽지 않습니다. 결과 업로드 기능이 생기더라도 시리얼 번호, 컴퓨터 이름, 계정명, IP는 수집하지 않고, 보내기 전에 전송 내용을 보여 주고 동의를 받을 예정입니다.

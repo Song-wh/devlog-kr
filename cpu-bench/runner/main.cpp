@@ -8,6 +8,7 @@
 // 측정 절차: 프로세스 우선순위 HIGH → 워밍업 1회 → N회 측정 → 중앙값 채택, 변동계수(CV) 계산
 // sweep은 작업 데이터 크기를 from부터 2배씩 to까지 늘려 가며 크기마다 같은 절차를 반복한다.
 #include "bench_api.h"
+#include "smbios.h"
 #include "topology.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -87,6 +88,9 @@ int cmd_info(bool json) {
         std::fprintf(stderr, "error: %s\n", err.c_str());
         return 1;
     }
+    MemoryInfo mem;
+    std::string mem_err;
+    const bool mem_ok = query_memory(mem, mem_err);
     if (json) {
         std::printf("{\"cpu\":%s,\"logical\":%zu,\"cores\":%u,\"groups\":%u,\"hybrid\":%s,\"perf_cores\":%u,\"caches\":[",
                     json_str(topo.brand).c_str(), topo.cpus.size(), topo.cores, topo.groups,
@@ -96,7 +100,24 @@ int cmd_info(bool json) {
             std::printf("%s{\"level\":%u,\"type\":\"%s\",\"size\":%u,\"count\":%u}", i ? "," : "", c.level, c.type,
                         c.size_bytes, c.count);
         }
-        std::printf("]}\n");
+        std::printf("]");
+        if (mem_ok) {
+            std::printf(",\"memory\":{\"smbios\":\"%u.%u\",\"total_bytes\":%llu,\"populated\":%zu,\"channels\":%u,\"modules\":[",
+                        mem.smbios_major, mem.smbios_minor, static_cast<unsigned long long>(mem.total_bytes()),
+                        mem.populated(), mem.channels());
+            bool first = true;
+            for (const auto& m : mem.modules) {
+                std::printf("%s{\"slot\":%s,\"bank\":%s,\"channel\":%s,\"size_bytes\":%llu,\"type\":\"%s\",\"form\":\"%s\","
+                            "\"rank\":%u,\"max_speed\":%u,\"configured_speed\":%u,\"manufacturer\":%s,\"part_number\":%s}",
+                            first ? "" : ",", json_str(m.device_locator).c_str(), json_str(m.bank_locator).c_str(),
+                            json_str(m.channel).c_str(), static_cast<unsigned long long>(m.size_bytes),
+                            memory_type_name(m.memory_type), form_factor_name(m.form_factor), m.rank, m.max_speed,
+                            m.configured_speed, json_str(m.manufacturer).c_str(), json_str(m.part_number).c_str());
+                first = false;
+            }
+            std::printf("]}");
+        }
+        std::printf("}\n");
         return 0;
     }
     std::printf("CPU      : %s\n", topo.brand.c_str());
@@ -107,6 +128,26 @@ int cmd_info(bool json) {
         std::printf("Hybrid   : no\n");
     for (const auto& c : topo.caches)
         std::printf("L%u %-11s: %6u KB x %u\n", c.level, c.type, c.size_bytes / 1024, c.count);
+    if (!mem_ok) {
+        std::printf("Memory   : unavailable (%s)\n", mem_err.c_str());
+        return 0;
+    }
+    const unsigned ch = mem.channels();
+    std::printf("Memory   : %.0f GiB, %zu of %zu slots used, %s\n", double(mem.total_bytes()) / double(1ull << 30),
+                mem.populated(), mem.modules.size(),
+                ch == 1 ? "single channel" : ch == 2 ? "dual channel" : ch ? (std::to_string(ch) + " channels").c_str()
+                                                                           : "channel layout unknown");
+    for (const auto& m : mem.modules) {
+        if (!m.size_bytes) {
+            std::printf("  %-22s: empty\n", m.device_locator.c_str());
+            continue;
+        }
+        std::printf("  %-22s: %.0f GiB %s %s, max %u MT/s, configured %u MT/s%s%s%s%s\n", m.device_locator.c_str(),
+                    double(m.size_bytes) / double(1ull << 30), memory_type_name(m.memory_type),
+                    form_factor_name(m.form_factor), m.max_speed, m.configured_speed,
+                    m.channel.empty() ? "" : ", channel ", m.channel.c_str(),
+                    m.part_number.empty() ? "" : ", ", m.part_number.c_str());
+    }
     return 0;
 }
 

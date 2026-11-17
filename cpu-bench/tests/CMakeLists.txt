@@ -15,3 +15,10 @@ add_test(NAME runner_mem_read_mt COMMAND cpu-bench-runner run mem --workload rea
 add_test(NAME runner_mem_copy COMMAND cpu-bench-runner run mem --workload copy --size 64M --duration-ms 200 --runs 2 --json)
 add_test(NAME runner_mem_write COMMAND cpu-bench-runner run mem --workload write --size 64M --threads 2 --duration-ms 200 --runs 2)
 add_test(NAME runner_mem_sweep COMMAND cpu-bench-runner sweep mem --workload latency --from 16K --to 4M --duration-ms 100 --runs 2)
+
+# SMBIOS 메모리 정보 해석 (직접 만든 표로 확인)
+add_executable(smbios_test smbios_test.cpp ${CMAKE_SOURCE_DIR}/runner/smbios.cpp)
+target_include_directories(smbios_test PRIVATE ${CMAKE_SOURCE_DIR}/runner)
+target_link_libraries(smbios_test PRIVATE bench_options)
+add_test(NAME smbios COMMAND smbios_test)
+add_test(NAME runner_info_json COMMAND cpu-bench-runner info --json)
