@@ -2,6 +2,8 @@
 //
 //   cpu-bench-runner info [--json]
 //   cpu-bench-runner check [--seconds N] [--json]   측정 전 환경 점검
+//   cpu-bench-runner clock [--json]                 코어별 유효 클럭
+//   cpu-bench-runner throttle [--seconds N] [--threads N | --mt] [--json]   지속 부하 중 클럭·처리량 변화
 //   cpu-bench-runner run <module id | dll 경로> [--workload W] [--size N] [--threads N | --mt]
 //                        [--duration-ms N] [--runs N] [--seed N] [--no-pin] [--json]
 //   cpu-bench-runner sweep <module> [--workload W] [--from N] [--to N] [측정 옵션...]
@@ -13,6 +15,7 @@
 #include "envcheck.h"
 #include "ramspec.h"
 #include "smbios.h"
+#include "throttle.h"
 #include "topology.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -79,6 +82,8 @@ int usage() {
                  "usage:\n"
                  "  cpu-bench-runner info [--json]\n"
                  "  cpu-bench-runner check [--seconds N] [--json]\n"
+                 "  cpu-bench-runner clock [--json]\n"
+                 "  cpu-bench-runner throttle [--seconds N] [--threads N | --mt] [--json]\n"
                  "  cpu-bench-runner run <module id | dll path> [--workload W] [--size N] [--threads N | --mt]\n"
                  "                       [--duration-ms N] [--runs N] [--seed N] [--no-pin] [--json]\n"
                  "  cpu-bench-runner sweep <module id | dll path> [--workload W] [--from N] [--to N]\n"
@@ -185,6 +190,95 @@ int cmd_clock(bool json) {
     for (const auto& r : rows)
         std::printf("  core %2u%s (cpu %2u): %.2f / %.2f GHz\n", r.core, topo.hybrid ? (r.perf ? " P" : " E") : "",
                     r.number, r.clk.max_ghz, r.clk.median_ghz);
+    return 0;
+}
+
+// ---------------------------------------------------------------- throttle
+
+void throttle_progress(unsigned sec, double units, void*) {
+    if (sec % 5 == 0) {
+        std::printf("  %4u s  %10.1f unit/s\n", sec, units);
+        std::fflush(stdout);
+    }
+}
+
+int cmd_throttle(int argc, wchar_t** argv) {
+    unsigned seconds = 60, threads = 0;
+    bool json = false;
+    for (int i = 2; i < argc; ++i) {
+        std::wstring a = argv[i];
+        auto next = [&](unsigned& v, unsigned lo, unsigned hi) {
+            if (i + 1 >= argc) return false;
+            wchar_t* end = nullptr;
+            unsigned long x = std::wcstoul(argv[++i], &end, 10);
+            if (!end || *end || x < lo || x > hi) return false;
+            v = unsigned(x);
+            return true;
+        };
+        if (a == L"--json") json = true;
+        else if (a == L"--mt") threads = 0;
+        else if (a == L"--seconds" && next(seconds, 5, 1800)) {}
+        else if (a == L"--threads" && next(threads, 1, 4096)) {}
+        else return usage();
+    }
+    Topology topo;
+    std::string err;
+    if (!query_topology(topo, err)) {
+        std::fprintf(stderr, "error: %s\n", err.c_str());
+        return 1;
+    }
+    if (threads == 0) threads = unsigned(topo.cpus.size());
+    // 우선순위는 보통(NORMAL)으로 둔다: 모든 코어를 오래 점유하므로 HIGH면 화면이 멈춘 것처럼 보일 수 있다
+    if (!json) {
+        std::printf("CPU      : %s\n", topo.brand.c_str());
+        std::printf("Load     : integer workload on %u threads for %u s (pinned), clock sampled every 0.25 s per thread\n",
+                    threads, seconds);
+    }
+    const ThrottleResult r = run_throttle(topo, threads, seconds, json ? nullptr : &throttle_progress, nullptr);
+    if (json) {
+        std::printf("{\"cpu\":%s,\"threads\":%u,\"seconds\":%u,\"hybrid\":%s,\"timeline\":[", json_str(topo.brand).c_str(),
+                    r.threads, r.seconds, r.hybrid ? "true" : "false");
+        for (size_t s = 0; s < r.timeline.size(); ++s)
+            std::printf("%s{\"units_per_sec\":%.1f,\"p_ghz\":%.3f,\"e_ghz\":%.3f}", s ? "," : "", r.timeline[s].units_per_sec,
+                        r.timeline[s].p_ghz, r.timeline[s].e_ghz);
+        std::printf("],\"start\":{\"units_per_sec\":%.1f,\"p_ghz\":%.3f,\"e_ghz\":%.3f},"
+                    "\"end\":{\"units_per_sec\":%.1f,\"p_ghz\":%.3f,\"e_ghz\":%.3f},"
+                    "\"throughput_change\":%.2f,\"p_change\":%.2f,\"e_change\":%.2f,\"p_drop_at\":%d,\"e_drop_at\":%d,"
+                    "\"throttled\":%s}\n",
+                    r.start.units_per_sec, r.start.p_ghz, r.start.e_ghz, r.end.units_per_sec, r.end.p_ghz, r.end.e_ghz,
+                    r.throughput_change, r.p_change, r.e_change, r.p_drop_at, r.e_drop_at, r.throttled ? "true" : "false");
+        return 0;
+    }
+    const char* p_label = r.hybrid ? "P clock" : "clock";
+    std::printf("\n%10s %14s %10s%s\n", "time", "throughput", p_label, r.hybrid ? "    E clock" : "");
+    for (unsigned s = 0; s < r.seconds; s += 5) {
+        double u = 0, p = 0, e = 0;
+        unsigned n = 0, np = 0, ne = 0;
+        for (unsigned k = s; k < std::min(s + 5, r.seconds); ++k, ++n) {
+            u += r.timeline[k].units_per_sec;
+            if (r.timeline[k].p_ghz > 0) p += r.timeline[k].p_ghz, ++np;
+            if (r.timeline[k].e_ghz > 0) e += r.timeline[k].e_ghz, ++ne;
+        }
+        std::printf("  %3u-%3u s %9.1f unit/s %6.2f GHz", s, std::min(s + 5, r.seconds), u / n, np ? p / np : 0.0);
+        if (r.hybrid) std::printf("  %6.2f GHz", ne ? e / ne : 0.0);
+        std::printf("\n");
+    }
+    std::printf("Start    : %.1f unit/s, %s %.2f GHz", r.start.units_per_sec, p_label, r.start.p_ghz);
+    if (r.hybrid) std::printf(", E clock %.2f GHz", r.start.e_ghz);
+    std::printf("\nEnd      : %.1f unit/s, %s %.2f GHz", r.end.units_per_sec, p_label, r.end.p_ghz);
+    if (r.hybrid) std::printf(", E clock %.2f GHz", r.end.e_ghz);
+    std::printf("\nChange   : throughput %+.1f%%, %s %+.1f%%", r.throughput_change, p_label, r.p_change);
+    if (r.hybrid) std::printf(", E clock %+.1f%%", r.e_change);
+    std::printf("\n");
+    if (r.p_drop_at >= 0) std::printf("Note     : %s first dropped below the start level at %d s\n", p_label, r.p_drop_at);
+    if (r.e_drop_at >= 0)
+        std::printf("Note     : E clock first dropped below the start level at %d s (%+.1f%%). If throughput holds, this is\n"
+                    "           usually the CPU's own power limit, not overheating.\n", r.e_drop_at, r.e_change);
+    if (r.throttled)
+        std::printf("Warning  : performance dropped more than %.0f%% under sustained load. Check CPU cooling and BIOS power limits.\n",
+                    kThrottleWarnPercent);
+    else
+        std::printf("Result   : no throttling (throughput and %s within %.0f%%)\n", p_label, kThrottleWarnPercent);
     return 0;
 }
 
@@ -704,6 +798,7 @@ int wmain(int argc, wchar_t** argv) {
     if (cmd == L"run") return cmd_run(argc, argv);
     if (cmd == L"sweep") return cmd_sweep(argc, argv);
     if (cmd == L"check") return cmd_check(argc, argv);
+    if (cmd == L"throttle") return cmd_throttle(argc, argv);
     if (cmd == L"clock") return cmd_clock(argc > 2 && std::wstring(argv[2]) == L"--json");
     return usage();
 }
