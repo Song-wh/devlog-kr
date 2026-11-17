@@ -576,6 +576,7 @@ struct Measurement {
     std::vector<BenchResult> results;
     std::vector<double> values;  // 표시 단위 값
     std::vector<double> others;  // 회차마다 다른 프로그램이 쓴 CPU %
+    std::vector<double> clocks;  // 싱글 측정: 회차 직후 그 코어의 유효 클럭(GHz), 멀티는 0
     Display display;
     double median = 0, cv = 0;
     uint64_t mismatches = 0;
@@ -604,6 +605,11 @@ int32_t measure(const Module& mod, const BenchConfig& cfg, uint32_t runs, Measur
         const CpuSample before = sample_cpu();
         rc = mod.run(ctx, &res, nullptr, nullptr, nullptr);
         const double others = other_cpu_percent(before, sample_cpu());
+        // 싱글 측정은 이 스레드(성능 코어에 고정됨)가 0번 워커라, 끝나자마자 같은 코어의 클럭을 잴 수 있다.
+        // 코어가 아직 바쁜 상태라 워밍업 없이 짧게 여러 번 재서 가장 높은 값을 쓴다.
+        double clock_ghz = 0;
+        if (cfg.threads == 1)
+            for (int k = 0; k < 5; ++k) clock_ghz = std::max(clock_ghz, measure_clock_ghz(500000));
         if (rc != BENCH_OK && rc != BENCH_E_CHECKSUM) {
             mod.shutdown(ctx);
             return rc;
@@ -620,6 +626,7 @@ int32_t measure(const Module& mod, const BenchConfig& cfg, uint32_t runs, Measur
         m.results.push_back(res);
         m.values.push_back(display_value(res, m.display));
         m.others.push_back(others);
+        m.clocks.push_back(clock_ghz);
         on_run(r, res, m.values.back());
     }
     mod.shutdown(ctx);
@@ -749,9 +756,9 @@ int cmd_run(int argc, wchar_t** argv) {
             const BenchResult& r = m.results[i];
             ops.push_back(r.ops_per_sec);
             std::printf("%s{\"ops_per_sec\":%.3f,\"value\":%.4f,\"iterations\":%llu,\"elapsed_s\":%.6f,"
-                        "\"mismatches\":%llu,\"others_cpu_percent\":%.2f}",
+                        "\"mismatches\":%llu,\"others_cpu_percent\":%.2f,\"clock_ghz\":%.3f}",
                         i ? "," : "", r.ops_per_sec, m.values[i], static_cast<unsigned long long>(r.iterations),
-                        r.elapsed_s, static_cast<unsigned long long>(r.mismatches), m.others[i]);
+                        r.elapsed_s, static_cast<unsigned long long>(r.mismatches), m.others[i], m.clocks[i]);
         }
         std::printf("],\"median_ops_per_sec\":%.3f,\"median_value\":%.4f,\"cv_percent\":%.3f,"
                     "\"checksum\":\"0x%016llx\",\"checksum_ok\":%s}\n",
