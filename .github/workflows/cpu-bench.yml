@@ -19,7 +19,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Python reference digest
-        run: python tools/int_reference.py 1
+        run: |
+          python tools/int_reference.py 1
+          python tools/mem_reference.py read 1 1048576
+          python tools/mem_reference.py latency 1 1048576
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build
@@ -30,3 +33,5 @@ jobs:
         run: |
           build/${{ matrix.preset }}/bin/cpu-bench-runner.exe info
           build/${{ matrix.preset }}/bin/cpu-bench-runner.exe run int --duration-ms 500 --runs 3
+          build/${{ matrix.preset }}/bin/cpu-bench-runner.exe run mem --workload read --mt --size 128M --duration-ms 500 --runs 3
+          build/${{ matrix.preset }}/bin/cpu-bench-runner.exe sweep mem --workload latency --from 16K --to 64M --duration-ms 200 --runs 2

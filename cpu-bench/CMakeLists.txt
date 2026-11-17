@@ -28,7 +28,13 @@ endif()
 add_library(bench_api INTERFACE)
 target_include_directories(bench_api INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# 모듈 공통 측정 루프 (header-only)
+add_library(bench_harness INTERFACE)
+target_include_directories(bench_harness INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/modules/common)
+target_link_libraries(bench_harness INTERFACE bench_api)
+
 add_subdirectory(modules/int)
+add_subdirectory(modules/mem)
 add_subdirectory(runner)
 
 include(CTest)

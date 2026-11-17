@@ -6,4 +6,4 @@ target_link_libraries(int_kernels PRIVATE bench_options)
 # 부하 모듈 DLL: bench_int.dll
 add_library(bench_int SHARED int_module.cpp)
 set_target_properties(bench_int PROPERTIES PREFIX "")
-target_link_libraries(bench_int PRIVATE bench_api bench_options int_kernels)
+target_link_libraries(bench_int PRIVATE bench_harness bench_options int_kernels)

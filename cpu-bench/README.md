@@ -2,7 +2,7 @@
 
 Windows PC용 무료 진단형 CPU 벤치마크. 점수만 보여 주는 게 아니라 **내 PC가 제 성능을 내는지, 왜 이 점수인지, 뭘 하면 나아지는지**까지 알려 주는 것이 목표입니다.
 
-> 아직 개발 초기입니다. 지금은 측정 러너(CLI)와 정수 부하 모듈 하나만 있습니다.
+> 아직 개발 초기입니다. 지금은 측정 러너(CLI)와 부하 모듈 두 개(정수, 메모리)가 있습니다.
 
 ## 구조
 
@@ -18,7 +18,7 @@ Windows PC용 무료 진단형 CPU 벤치마크. 점수만 보여 주는 게 아
 
 모듈은 같은 입력으로 같은 계산(작업 단위)을 반복합니다. 그래서 결과값(checksum)은 항상 같아야 합니다.
 
-1. **계산이 실제로 일어났는지**: 결과가 기대값과 맞아야 합니다. 정수 모듈은 같은 계산을 Python 표준 라이브러리로 따로 구현한 [tools/int_reference.py](tools/int_reference.py)와 결과를 비교합니다.
+1. **계산이 실제로 일어났는지**: 결과가 기대값과 맞아야 합니다. 같은 계산을 Python 표준 라이브러리로 따로 구현한 [tools/int_reference.py](tools/int_reference.py), [tools/mem_reference.py](tools/mem_reference.py)와 결과를 비교합니다.
 2. **PC가 안정적인지**: 반복 도중 결과가 한 번이라도 달라지면 불안정한 오버클럭이나 메모리 설정(XMP)을 의심할 수 있습니다. 러너는 이 경우 경고하고 종료 코드 3을 돌려줍니다.
 
 ## 부하 모듈
@@ -27,8 +27,32 @@ Windows PC용 무료 진단형 CPU 벤치마크. 점수만 보여 주는 게 아
 |---|---|---|
 | `int` | CRC-32, SHA-256, 정렬, 숫자 파싱 | 동작 (압축/해제는 추가 예정) |
 | `fp` | 행렬곱, N-body, FFT (SSE/AVX2/AVX-512 경로 자동 선택) | 예정 |
-| `mem` | 메모리 대역폭, 캐시·DRAM 지연 | 예정 |
+| `mem` | 읽기·쓰기·복사 대역폭, 캐시·DRAM 지연 (작업 크기를 바꿔 가며 L1→DRAM) | 동작 (SSE2) |
 | `mt` | 원자적 연산 경합, lock-free 큐, 스레드 확장 곡선 | 예정 |
+
+### 메모리 모듈 (`mem`)
+
+| 측정 종류 (`--workload`) | 내용 | 표시 |
+|---|---|---|
+| `read` (기본) | 데이터를 읽어 합계 | GB/s |
+| `write` | 고정 패턴 기록 | GB/s |
+| `copy` | 원본 → 대상 복사. STREAM처럼 읽은 바이트와 쓴 바이트를 모두 셉니다 | GB/s |
+| `latency` | 무작위 순서로 이어진 포인터를 따라가기. 다음 주소를 알려면 앞 로드가 끝나야 해서, 로드 1회 시간이 곧 지연입니다 | ns |
+
+- `--size`는 전체 스레드가 다루는 데이터 크기입니다(기본 256 MiB, L3보다 충분히 큼). 스레드마다 같은 크기 구간을 맡고, `copy`는 원본·대상이 절반씩입니다.
+- `sweep`으로 크기를 2배씩 늘리면 L1 → L2 → L3 → DRAM 구간에서 값이 계단처럼 바뀝니다.
+- 알아 둘 점
+  - 지연은 4 KiB 페이지 기준이라, 수 MiB를 넘으면 TLB 미스 비용이 포함됩니다(L3 안이라도 값이 커짐). 큰 페이지는 관리자 권한이 필요해서 쓰지 않습니다.
+  - 대역폭 커널은 지금 SSE2(16바이트)입니다. DRAM 구간에는 충분하지만 L1·L2 구간은 CPU 연산 폭이 한계라 실제 캐시 대역폭보다 낮게 나옵니다. AVX2 경로는 FP 모듈과 함께 추가할 예정입니다.
+
+개발 PC(i5-14400F) 실측 예:
+
+| 항목 | 싱글 스레드 | 16스레드 |
+|---|---|---|
+| 읽기 256 MiB | 22.3 GB/s | 81.7 GB/s |
+| 쓰기 256 MiB | 15.7 GB/s | 49.3 GB/s |
+| 복사 256 MiB | 25.2 GB/s | 64.6 GB/s |
+| 지연 256 MiB | 94.3 ns | |
 
 ## 빌드
 
@@ -49,6 +73,9 @@ cpu-bench-runner info                       # CPU, 코어 구성, 캐시
 cpu-bench-runner run int                    # 싱글 스레드 (성능 코어 고정)
 cpu-bench-runner run int --mt               # 모든 논리 코어
 cpu-bench-runner run int --threads 4 --duration-ms 3000 --runs 7 --json
+cpu-bench-runner run mem --workload read --mt   # 메모리 읽기 대역폭, 모든 논리 코어
+cpu-bench-runner run mem --workload latency --size 64M
+cpu-bench-runner sweep mem --workload latency   # 16 KiB → 512 MiB 지연 곡선
 ```
 
 | 옵션 | 기본값 | 설명 |
@@ -59,6 +86,10 @@ cpu-bench-runner run int --threads 4 --duration-ms 3000 --runs 7 --json
 | `--seed N` | 1 | 입력 데이터 seed |
 | `--no-pin` | | 코어 고정 끄기 |
 | `--json` | | JSON으로 출력 (제어 앱·자동화용) |
+| `--workload W` | 모듈 기본값 | 측정 종류 (`mem`: read, write, copy, latency) |
+| `--size N` | 모듈 기본값 | 작업 데이터 크기. `16K`, `256M`, `1G`처럼 씁니다 (1024 단위) |
+
+`sweep`은 `--size` 대신 `--from`(기본 16K), `--to`(기본 512M)를 받고, 측정 1회 500 ms × 3회가 기본입니다.
 
 종료 코드: `0` 정상, `1` 실행 오류, `2` 사용법 오류, `3` checksum 불일치
 

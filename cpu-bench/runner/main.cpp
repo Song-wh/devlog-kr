@@ -1,10 +1,12 @@
 // cpu-bench-runner: 측정 전용 프로세스 (CLI)
 //
 //   cpu-bench-runner info [--json]
-//   cpu-bench-runner run <module id | dll 경로> [--threads N | --mt] [--duration-ms N]
-//                        [--runs N] [--seed N] [--no-pin] [--json]
+//   cpu-bench-runner run <module id | dll 경로> [--workload W] [--size N] [--threads N | --mt]
+//                        [--duration-ms N] [--runs N] [--seed N] [--no-pin] [--json]
+//   cpu-bench-runner sweep <module> [--workload W] [--from N] [--to N] [측정 옵션...]
 //
 // 측정 절차: 프로세스 우선순위 HIGH → 워밍업 1회 → N회 측정 → 중앙값 채택, 변동계수(CV) 계산
+// sweep은 작업 데이터 크기를 from부터 2배씩 to까지 늘려 가며 크기마다 같은 절차를 반복한다.
 #include "bench_api.h"
 #include "topology.h"
 
@@ -15,6 +17,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -107,7 +110,7 @@ int cmd_info(bool json) {
     return 0;
 }
 
-// ---------------------------------------------------------------- run
+// ---------------------------------------------------------------- run / sweep
 
 struct Module {
     HMODULE dll = nullptr;
@@ -115,6 +118,8 @@ struct Module {
     PFN_bench_init init = nullptr;
     PFN_bench_run run = nullptr;
     PFN_bench_shutdown shutdown = nullptr;
+    const BenchInfo* info = nullptr;
+    std::vector<std::string> workloads;  // v2 모듈이 알려 준 측정 종류. 첫 번째가 기본값
 };
 
 std::wstring resolve_module(const std::wstring& arg) {
@@ -153,10 +158,23 @@ bool load_module(const std::wstring& path, Module& m, std::string& err) {
         err = "module does not export the bench_* functions";
         return false;
     }
-    const BenchInfo* info = m.get_info();
-    if (!info || info->api_version != BENCH_API_VERSION) {
+    // 구조체는 뒤에만 필드를 추가하므로 이전 버전 모듈도 읽을 수 있다
+    m.info = m.get_info();
+    if (!m.info || m.info->api_version < 1 || m.info->api_version > BENCH_API_VERSION) {
         err = "module API version mismatch";
         return false;
+    }
+    if (m.info->struct_size >= offsetof(BenchInfo, workloads) + sizeof(m.info->workloads) && m.info->workloads) {
+        std::string cur;
+        for (const char* p = m.info->workloads;; ++p) {
+            if (*p && *p != ',') {
+                cur += *p;
+                continue;
+            }
+            if (!cur.empty()) m.workloads.push_back(cur);
+            cur.clear();
+            if (!*p) break;
+        }
     }
     return true;
 }
@@ -180,145 +198,346 @@ double median(std::vector<double> v) {
     return n % 2 ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
 }
 
-int cmd_run(int argc, wchar_t** argv) {
-    if (argc < 3) return usage();
-    std::wstring module_arg = argv[2];
+// "16K", "256M", "1G", "4096" (K/M/G는 1024 단위)
+bool parse_size(const std::wstring& s, uint64_t& out) {
+    wchar_t* end = nullptr;
+    uint64_t v = std::wcstoull(s.c_str(), &end, 0);
+    if (!end || end == s.c_str()) return false;
+    int shift = 0;
+    if (*end == L'K' || *end == L'k') shift = 10;
+    else if (*end == L'M' || *end == L'm') shift = 20;
+    else if (*end == L'G' || *end == L'g') shift = 30;
+    if (shift) ++end;
+    if (*end || v == 0 || v > (~0ull >> shift)) return false;
+    out = v << shift;
+    return true;
+}
+
+std::string format_size(uint64_t b) {
+    char buf[32];
+    const unsigned long long u = b;
+    if (b >= (1ull << 30) && b % (1ull << 30) == 0) std::snprintf(buf, sizeof(buf), "%llu GiB", u >> 30);
+    else if (b >= (1ull << 20) && b % (1ull << 20) == 0) std::snprintf(buf, sizeof(buf), "%llu MiB", u >> 20);
+    else if (b >= (1ull << 10) && b % (1ull << 10) == 0) std::snprintf(buf, sizeof(buf), "%llu KiB", u >> 10);
+    else if (b >= (1ull << 20)) std::snprintf(buf, sizeof(buf), "%.1f MiB", double(b) / double(1ull << 20));
+    else if (b >= (1ull << 10)) std::snprintf(buf, sizeof(buf), "%.1f KiB", double(b) / 1024.0);
+    else std::snprintf(buf, sizeof(buf), "%llu B", u);
+    return buf;
+}
+
+// 결과 단위에 맞춘 표시: byte -> GB/s, load -> 로드 1회 지연(ns), 그 외 -> <unit>/s
+struct Display {
+    std::string raw_unit;  // 모듈이 준 op 단위
+    std::string unit;      // 표시 단위
+};
+
+Display display_of(const BenchResult& r, const BenchInfo* info) {
+    Display d;
+    d.raw_unit = r.unit_name[0] ? r.unit_name : info->unit_name;
+    if (d.raw_unit == "byte") d.unit = "GB/s";
+    else if (d.raw_unit == "load") d.unit = "ns";
+    else d.unit = d.raw_unit + "/s";
+    return d;
+}
+
+double display_value(const BenchResult& r, const Display& d) {
+    if (d.raw_unit == "byte") return r.ops_per_sec / 1e9;
+    if (d.raw_unit == "load") return r.ops_per_sec > 0 ? double(r.threads_used) * 1e9 / r.ops_per_sec : 0.0;
+    return r.ops_per_sec;
+}
+
+struct Options {
+    std::wstring module;
+    std::string workload;  // 비어 있으면 모듈 기본값
+    uint64_t size = 0;     // 0이면 모듈 기본값
+    uint64_t from = 16ull << 10, to = 512ull << 20;
     uint32_t threads = 1, duration_ms = 2000, runs = 5;
     uint64_t seed = 1;
     bool mt_all = false, pin = true, json = false;
+};
 
+bool parse_options(int argc, wchar_t** argv, bool sweep, Options& o) {
+    if (argc < 3) return false;
+    o.module = argv[2];
+    if (sweep) {
+        o.duration_ms = 500;
+        o.runs = 3;
+    }
     for (int i = 3; i < argc; ++i) {
         std::wstring a = argv[i];
+        const bool has_value = i + 1 < argc;
         auto next_u64 = [&](uint64_t& v) {
-            if (i + 1 >= argc) return false;
+            if (!has_value) return false;
             wchar_t* end = nullptr;
             v = std::wcstoull(argv[++i], &end, 0);
             return end && *end == 0;
         };
+        auto next_size = [&](uint64_t& v) { return has_value && parse_size(argv[++i], v); };
         uint64_t v = 0;
-        if (a == L"--threads" && next_u64(v) && v > 0) threads = uint32_t(v);
-        else if (a == L"--mt") mt_all = true;
-        else if (a == L"--duration-ms" && next_u64(v) && v > 0) duration_ms = uint32_t(v);
-        else if (a == L"--runs" && next_u64(v) && v > 0) runs = uint32_t(v);
-        else if (a == L"--seed" && next_u64(v)) seed = v;
-        else if (a == L"--no-pin") pin = false;
-        else if (a == L"--json") json = true;
-        else return usage();
+        if (a == L"--threads" && next_u64(v) && v > 0 && v <= 4096) o.threads = uint32_t(v);
+        else if (a == L"--mt") o.mt_all = true;
+        else if (a == L"--duration-ms" && next_u64(v) && v > 0 && v <= 3600000) o.duration_ms = uint32_t(v);
+        else if (a == L"--runs" && next_u64(v) && v > 0 && v <= 1000) o.runs = uint32_t(v);
+        else if (a == L"--seed" && next_u64(v)) o.seed = v;
+        else if (a == L"--no-pin") o.pin = false;
+        else if (a == L"--json") o.json = true;
+        else if (a == L"--workload" && has_value) o.workload = narrow(argv[++i]);
+        else if (!sweep && a == L"--size" && next_size(v)) o.size = v;
+        else if (sweep && a == L"--from" && next_size(v)) o.from = v;
+        else if (sweep && a == L"--to" && next_size(v)) o.to = v;
+        else return false;
     }
+    return !sweep || o.from <= o.to;
+}
 
-    Topology topo;
-    std::string err;
-    if (!query_topology(topo, err)) {
-        std::fprintf(stderr, "error: %s\n", err.c_str());
-        return 1;
-    }
-    if (mt_all) threads = uint32_t(topo.cpus.size());
+// 측정 한 세트: bench_init → 워밍업 1회 → N회 → bench_shutdown
+struct Measurement {
+    std::vector<BenchResult> results;
+    std::vector<double> values;  // 표시 단위 값
+    Display display;
+    double median = 0, cv = 0;
+    uint64_t mismatches = 0;
+    bool ok = false;  // 회차 간 checksum 같음 + 불일치 0
+};
 
-    Module mod;
-    if (!load_module(resolve_module(module_arg), mod, err)) {
-        std::fprintf(stderr, "error: %s\n", err.c_str());
-        return 1;
-    }
-    const BenchInfo* info = mod.get_info();
-
-    // REALTIME은 쓰지 않는다 (시스템이 멈출 수 있음). HIGH만 사용.
-    bool high_priority = SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS) != 0;
-
-    PinPlan plan;
-    plan.enabled = pin;
-    plan.order = placement_order(topo);
-
-    BenchConfig cfg{};
-    cfg.struct_size = sizeof(cfg);
-    cfg.threads = threads;
-    cfg.duration_ms = duration_ms;
-    cfg.flags = BENCH_FLAG_NONE;
-    cfg.seed = seed;
-    cfg.thread_init = &on_thread_init;
-    cfg.user = &plan;
-
+template <class OnRun>
+int32_t measure(const Module& mod, const BenchConfig& cfg, uint32_t runs, Measurement& m, OnRun&& on_run) {
     BenchContext* ctx = nullptr;
     int32_t rc = mod.init(&cfg, &ctx);
-    if (rc != BENCH_OK) {
-        std::fprintf(stderr, "error: bench_init failed (%s)\n", status_name(rc));
-        return 1;
-    }
-
-    if (!json) {
-        std::printf("Module   : %s %s\n", info->name, info->version);
-        std::printf("CPU      : %s\n", topo.brand.c_str());
-        std::printf("Threads  : %u%s, %u ms x %u runs (+1 warm-up), seed %llu\n", threads,
-                    pin ? (threads == 1 && topo.hybrid ? ", pinned to a performance core" : ", pinned") : "",
-                    duration_ms, runs, static_cast<unsigned long long>(seed));
-    }
-
-    std::vector<BenchResult> results;
-    int32_t worst_rc = BENCH_OK;
+    if (rc != BENCH_OK) return rc;
+    int32_t worst = BENCH_OK;
     for (uint32_t r = 0; r <= runs; ++r) {  // r == 0은 워밍업
         BenchResult res{};
         res.struct_size = sizeof(res);
         rc = mod.run(ctx, &res, nullptr, nullptr, nullptr);
         if (rc != BENCH_OK && rc != BENCH_E_CHECKSUM) {
-            std::fprintf(stderr, "error: bench_run failed (%s)\n", status_name(rc));
             mod.shutdown(ctx);
-            return 1;
+            return rc;
         }
-        if (rc == BENCH_E_CHECKSUM) worst_rc = rc;
+        if (rc == BENCH_E_CHECKSUM) worst = rc;
         if (r == 0) continue;
-        results.push_back(res);
-        if (!json)
-            std::printf("  run %u  : %12.1f %s/s  (%llu %ss, %.3f s)%s\n", r, res.ops_per_sec, info->unit_name,
-                        static_cast<unsigned long long>(res.iterations), info->unit_name, res.elapsed_s,
-                        res.mismatches ? "  CHECKSUM MISMATCH" : "");
+        if (m.results.empty()) m.display = display_of(res, mod.info);
+        m.results.push_back(res);
+        m.values.push_back(display_value(res, m.display));
+        on_run(r, res, m.values.back());
     }
     mod.shutdown(ctx);
 
-    std::vector<double> ops;
-    uint64_t mismatches = 0;
-    bool checksum_stable = true;
-    for (const auto& r : results) {
-        ops.push_back(r.ops_per_sec);
-        mismatches += r.mismatches;
-        if (r.checksum != results.front().checksum) checksum_stable = false;
+    bool stable = true;
+    for (const auto& r : m.results) {
+        m.mismatches += r.mismatches;
+        if (r.checksum != m.results.front().checksum) stable = false;
     }
     double mean = 0;
-    for (double o : ops) mean += o;
-    mean /= double(ops.size());
+    for (double v : m.values) mean += v;
+    mean /= double(m.values.size());
     double var = 0;
-    for (double o : ops) var += (o - mean) * (o - mean);
-    double stdev = ops.size() > 1 ? std::sqrt(var / double(ops.size() - 1)) : 0.0;
-    double cv = mean > 0 ? 100.0 * stdev / mean : 0.0;
-    double med = median(ops);
-    bool ok = mismatches == 0 && checksum_stable && worst_rc == BENCH_OK;
+    for (double v : m.values) var += (v - mean) * (v - mean);
+    double stdev = m.values.size() > 1 ? std::sqrt(var / double(m.values.size() - 1)) : 0.0;
+    m.cv = mean > 0 ? 100.0 * stdev / mean : 0.0;
+    m.median = median(m.values);
+    m.ok = m.mismatches == 0 && stable && worst == BENCH_OK;
+    return BENCH_OK;
+}
 
-    if (json) {
-        std::printf("{\"module\":%s,\"module_version\":%s,\"variant\":%s,\"cpu\":%s,\"threads\":%u,"
-                    "\"pinned\":%s,\"pin_failures\":%d,\"high_priority\":%s,\"duration_ms\":%u,\"seed\":%llu,"
-                    "\"runs\":[",
-                    json_str(info->id).c_str(), json_str(info->version).c_str(),
-                    json_str(results.front().variant).c_str(), json_str(topo.brand).c_str(), threads,
-                    pin ? "true" : "false", plan.failures.load(), high_priority ? "true" : "false", duration_ms,
-                    static_cast<unsigned long long>(seed));
-        for (size_t i = 0; i < results.size(); ++i)
-            std::printf("%s{\"ops_per_sec\":%.3f,\"iterations\":%llu,\"elapsed_s\":%.6f,\"mismatches\":%llu}",
-                        i ? "," : "", results[i].ops_per_sec,
-                        static_cast<unsigned long long>(results[i].iterations), results[i].elapsed_s,
-                        static_cast<unsigned long long>(results[i].mismatches));
-        std::printf("],\"median_ops_per_sec\":%.3f,\"cv_percent\":%.3f,\"checksum\":\"0x%016llx\","
-                    "\"checksum_ok\":%s}\n",
-                    med, cv, static_cast<unsigned long long>(results.front().checksum), ok ? "true" : "false");
+// run / sweep 공통 준비: 토폴로지, 모듈 로드, 우선순위, 코어 고정 계획, 기본 설정
+struct Session {
+    Topology topo;
+    Module mod;
+    PinPlan plan;
+    bool high_priority = false;
+    std::string workload;  // 표시용 (지정하지 않으면 모듈의 첫 번째 종류)
+    BenchConfig cfg{};
+};
+
+bool open_session(const Options& o, Session& s) {
+    std::string err;
+    if (!query_topology(s.topo, err) || !load_module(resolve_module(o.module), s.mod, err)) {
+        std::fprintf(stderr, "error: %s\n", err.c_str());
+        return false;
+    }
+    if (s.mod.workloads.empty() && (!o.workload.empty() || o.size)) {
+        std::fprintf(stderr, "error: module '%s' does not support --workload/--size\n", s.mod.info->id);
+        return false;
+    }
+    if (!o.workload.empty() &&
+        std::find(s.mod.workloads.begin(), s.mod.workloads.end(), o.workload) == s.mod.workloads.end()) {
+        std::string list;
+        for (const auto& w : s.mod.workloads) list += (list.empty() ? "" : ", ") + w;
+        std::fprintf(stderr, "error: unknown workload '%s' (available: %s)\n", o.workload.c_str(), list.c_str());
+        return false;
+    }
+    s.workload = !o.workload.empty() ? o.workload : (s.mod.workloads.empty() ? "" : s.mod.workloads.front());
+
+    // REALTIME은 쓰지 않는다 (시스템이 멈출 수 있음). HIGH만 사용.
+    s.high_priority = SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS) != 0;
+    s.plan.enabled = o.pin;
+    s.plan.order = placement_order(s.topo);
+
+    s.cfg.struct_size = sizeof(s.cfg);
+    s.cfg.threads = o.mt_all ? uint32_t(s.topo.cpus.size()) : o.threads;
+    s.cfg.duration_ms = o.duration_ms;
+    s.cfg.flags = BENCH_FLAG_NONE;
+    s.cfg.seed = o.seed;
+    s.cfg.thread_init = &on_thread_init;
+    s.cfg.user = &s.plan;
+    s.cfg.workload = o.workload.empty() ? nullptr : o.workload.c_str();
+    s.cfg.working_set_bytes = o.size;
+    return true;
+}
+
+void report_error(int32_t rc, const Session& s) {
+    if (rc == BENCH_E_INVALID_ARG && s.cfg.working_set_bytes)
+        std::fprintf(stderr, "error: working set %s is too small for %u threads (min 4 KiB per thread)\n",
+                     format_size(s.cfg.working_set_bytes).c_str(), s.cfg.threads);
+    else
+        std::fprintf(stderr, "error: benchmark failed (%s)\n", status_name(rc));
+}
+
+const char* pin_text(const Options& o, const Session& s) {
+    if (!o.pin) return "";
+    return s.cfg.threads == 1 && s.topo.hybrid ? ", pinned to a performance core" : ", pinned";
+}
+
+void print_session_warnings(const Session& s) {
+    if (!s.high_priority) std::printf("Warning  : could not raise process priority\n");
+    if (s.plan.failures) std::printf("Warning  : %d thread(s) could not be pinned\n", s.plan.failures.load());
+}
+
+int cmd_run(int argc, wchar_t** argv) {
+    Options o;
+    if (!parse_options(argc, argv, false, o)) return usage();
+    Session s;
+    if (!open_session(o, s)) return 1;
+    const BenchInfo* info = s.mod.info;
+
+    if (!o.json) {
+        std::printf("Module   : %s %s\n", info->name, info->version);
+        std::printf("CPU      : %s\n", s.topo.brand.c_str());
+        std::printf("Threads  : %u%s, %u ms x %u runs (+1 warm-up), seed %llu\n", s.cfg.threads, pin_text(o, s),
+                    o.duration_ms, o.runs, static_cast<unsigned long long>(o.seed));
+    }
+
+    Measurement m;
+    int32_t rc = measure(s.mod, s.cfg, o.runs, m, [&](uint32_t r, const BenchResult& res, double v) {
+        if (o.json) return;
+        if (r == 1 && !s.workload.empty())
+            std::printf("Workload : %s, %s\n", s.workload.c_str(), format_size(res.working_set_bytes).c_str());
+        std::printf("  run %u  : %12.2f %-6s (%llu %ss, %.3f s)%s\n", r, v, m.display.unit.c_str(),
+                    static_cast<unsigned long long>(res.iterations), m.display.raw_unit.c_str(), res.elapsed_s,
+                    res.mismatches ? "  CHECKSUM MISMATCH" : "");
+    });
+    if (rc != BENCH_OK) {
+        report_error(rc, s);
+        return 1;
+    }
+
+    const BenchResult& first = m.results.front();
+    if (o.json) {
+        std::printf("{\"module\":%s,\"module_version\":%s,\"workload\":%s,\"working_set_bytes\":%llu,"
+                    "\"variant\":%s,\"cpu\":%s,\"threads\":%u,\"pinned\":%s,\"pin_failures\":%d,"
+                    "\"high_priority\":%s,\"duration_ms\":%u,\"seed\":%llu,\"unit\":%s,\"value_unit\":%s,\"runs\":[",
+                    json_str(info->id).c_str(), json_str(info->version).c_str(), json_str(s.workload).c_str(),
+                    static_cast<unsigned long long>(first.working_set_bytes), json_str(first.variant).c_str(),
+                    json_str(s.topo.brand).c_str(), s.cfg.threads, o.pin ? "true" : "false",
+                    s.plan.failures.load(), s.high_priority ? "true" : "false", o.duration_ms,
+                    static_cast<unsigned long long>(o.seed), json_str(m.display.raw_unit).c_str(),
+                    json_str(m.display.unit).c_str());
+        std::vector<double> ops;
+        for (size_t i = 0; i < m.results.size(); ++i) {
+            const BenchResult& r = m.results[i];
+            ops.push_back(r.ops_per_sec);
+            std::printf("%s{\"ops_per_sec\":%.3f,\"value\":%.4f,\"iterations\":%llu,\"elapsed_s\":%.6f,"
+                        "\"mismatches\":%llu}",
+                        i ? "," : "", r.ops_per_sec, m.values[i], static_cast<unsigned long long>(r.iterations),
+                        r.elapsed_s, static_cast<unsigned long long>(r.mismatches));
+        }
+        std::printf("],\"median_ops_per_sec\":%.3f,\"median_value\":%.4f,\"cv_percent\":%.3f,"
+                    "\"checksum\":\"0x%016llx\",\"checksum_ok\":%s}\n",
+                    median(ops), m.median, m.cv, static_cast<unsigned long long>(first.checksum),
+                    m.ok ? "true" : "false");
     } else {
-        std::printf("Median   : %.1f %s/s  (CV %.2f%%)\n", med, info->unit_name, cv);
-        std::printf("Variant  : %s\n", results.front().variant);
-        std::printf("Checksum : 0x%016llx %s\n", static_cast<unsigned long long>(results.front().checksum),
-                    ok ? "(stable)" : "(MISMATCH - results are not trustworthy)");
-        if (cv > kCvWarnPercent)
+        std::printf("Median   : %.2f %s  (CV %.2f%%)\n", m.median, m.display.unit.c_str(), m.cv);
+        std::printf("Variant  : %s\n", first.variant);
+        std::printf("Checksum : 0x%016llx %s\n", static_cast<unsigned long long>(first.checksum),
+                    m.ok ? "(stable)" : "(MISMATCH - results are not trustworthy)");
+        if (m.cv > kCvWarnPercent)
             std::printf("Warning  : run-to-run variation is above %.0f%%. Close background apps and retry.\n",
                         kCvWarnPercent);
-        if (!high_priority) std::printf("Warning  : could not raise process priority\n");
-        if (plan.failures) std::printf("Warning  : %d thread(s) could not be pinned\n", plan.failures.load());
+        print_session_warnings(s);
     }
-    return ok ? 0 : 3;
+    return m.ok ? 0 : 3;
+}
+
+int cmd_sweep(int argc, wchar_t** argv) {
+    Options o;
+    if (!parse_options(argc, argv, true, o)) return usage();
+    Session s;
+    if (!open_session(o, s)) return 1;
+    const BenchInfo* info = s.mod.info;
+    if (s.mod.workloads.empty()) {
+        std::fprintf(stderr, "error: module '%s' has a fixed working set; use 'run'\n", info->id);
+        return 1;
+    }
+
+    if (o.json) {
+        std::printf("{\"module\":%s,\"module_version\":%s,\"workload\":%s,\"cpu\":%s,\"threads\":%u,\"pinned\":%s,"
+                    "\"duration_ms\":%u,\"runs\":%u,\"seed\":%llu,\"points\":[",
+                    json_str(info->id).c_str(), json_str(info->version).c_str(), json_str(s.workload).c_str(),
+                    json_str(s.topo.brand).c_str(), s.cfg.threads, o.pin ? "true" : "false", o.duration_ms, o.runs,
+                    static_cast<unsigned long long>(o.seed));
+    } else {
+        std::printf("Module   : %s %s\n", info->name, info->version);
+        std::printf("CPU      : %s\n", s.topo.brand.c_str());
+        std::printf("Workload : %s\n", s.workload.c_str());
+        std::printf("Threads  : %u%s, %u ms x %u runs per size (+1 warm-up), seed %llu\n", s.cfg.threads,
+                    pin_text(o, s), o.duration_ms, o.runs, static_cast<unsigned long long>(o.seed));
+        std::string caches;
+        for (const auto& c : s.topo.caches) {
+            if (std::string(c.type) == "instruction") continue;
+            char b[64];
+            std::snprintf(b, sizeof(b), "%sL%u %s x %u", caches.empty() ? "" : ", ", c.level,
+                          format_size(c.size_bytes).c_str(), c.count);
+            caches += b;
+        }
+        std::printf("Caches   : %s\n", caches.c_str());
+        std::printf("\n%12s %14s %9s  %s\n", "Size", "Median", "CV", "Checksum");
+    }
+
+    bool all_ok = true;
+    for (uint64_t size = o.from;; size *= 2) {
+        s.cfg.working_set_bytes = size;
+        Measurement m;
+        int32_t rc = measure(s.mod, s.cfg, o.runs, m, [](uint32_t, const BenchResult&, double) {});
+        if (rc != BENCH_OK) {
+            if (o.json) std::printf("]}\n");
+            report_error(rc, s);
+            return 1;
+        }
+        all_ok = all_ok && m.ok;
+        const BenchResult& first = m.results.front();
+        if (o.json) {
+            std::printf("%s{\"working_set_bytes\":%llu,\"median_value\":%.4f,\"value_unit\":%s,\"cv_percent\":%.3f,"
+                        "\"checksum\":\"0x%016llx\",\"checksum_ok\":%s}",
+                        size == o.from ? "" : ",", static_cast<unsigned long long>(first.working_set_bytes),
+                        m.median, json_str(m.display.unit).c_str(), m.cv,
+                        static_cast<unsigned long long>(first.checksum), m.ok ? "true" : "false");
+        } else {
+            char val[32];
+            std::snprintf(val, sizeof(val), "%.2f %s", m.median, m.display.unit.c_str());
+            std::printf("%12s %14s %8.2f%%  %s%s\n", format_size(first.working_set_bytes).c_str(), val, m.cv,
+                        m.ok ? "ok" : "MISMATCH", m.cv > kCvWarnPercent ? "  (unstable)" : "");
+            std::fflush(stdout);
+        }
+        if (size > o.to / 2) break;
+    }
+    if (o.json) {
+        std::printf("],\"checksum_ok\":%s}\n", all_ok ? "true" : "false");
+    } else {
+        print_session_warnings(s);
+        if (!all_ok) std::printf("Checksum mismatch detected - results are not trustworthy\n");
+    }
+    return all_ok ? 0 : 3;
 }
 
 }  // namespace
@@ -328,5 +547,6 @@ int wmain(int argc, wchar_t** argv) {
     std::wstring cmd = argv[1];
     if (cmd == L"info") return cmd_info(argc > 2 && std::wstring(argv[2]) == L"--json");
     if (cmd == L"run") return cmd_run(argc, argv);
+    if (cmd == L"sweep") return cmd_sweep(argc, argv);
     return usage();
 }

@@ -15,6 +15,13 @@
  *        (불안정한 오버클럭/XMP에서 생기는 계산 오류).
  *
  * 구조체는 struct_size를 첫 필드로 두어, 나중에 필드를 뒤에 추가해도 이전 러너/모듈과 호환되게 한다.
+ *
+ * 버전 기록
+ *   1: 최초 버전
+ *   2: 측정 종류(workload)와 작업 데이터 크기(working_set_bytes) 추가. 메모리 모듈처럼
+ *      한 모듈이 여러 값을 재는 경우, 러너가 종류·크기를 바꿔 가며 여러 번 호출한다.
+ *      BenchInfo.workloads, BenchConfig.workload/working_set_bytes,
+ *      BenchResult.working_set_bytes/unit_name 추가 (모두 구조체 끝에 추가).
  */
 #ifndef BENCH_API_H
 #define BENCH_API_H
@@ -25,7 +32,7 @@
 extern "C" {
 #endif
 
-#define BENCH_API_VERSION 1u
+#define BENCH_API_VERSION 2u
 
 #if defined(_WIN32)
 #  if defined(BENCH_MODULE_BUILD)
@@ -69,6 +76,8 @@ typedef struct BenchInfo {
     const char* name;          /* 사람이 읽는 이름 */
     const char* version;       /* 모듈 버전. 점수 체계 버전 관리에 사용 */
     const char* unit_name;     /* ops_per_sec의 op가 무엇인지 (예: "unit") */
+    /* --- v2 --- */
+    const char* workloads;     /* 지원하는 측정 종류, 쉼표로 구분, 첫 번째가 기본값. 없으면 NULL */
 } BenchInfo;
 
 typedef struct BenchConfig {
@@ -79,6 +88,9 @@ typedef struct BenchConfig {
     uint64_t          seed;         /* 입력 데이터 생성 seed */
     BenchThreadInitFn thread_init;  /* NULL 가능 */
     void*             user;         /* thread_init / progress 콜백에 그대로 전달 */
+    /* --- v2 --- */
+    const char*       workload;           /* NULL 또는 ""이면 기본값. 모르는 이름이면 BENCH_E_UNSUPPORTED */
+    uint64_t          working_set_bytes;  /* 전체 스레드가 다루는 데이터 크기. 0이면 모듈 기본값 */
 } BenchConfig;
 
 typedef struct BenchResult {
@@ -90,6 +102,10 @@ typedef struct BenchResult {
     uint64_t checksum;      /* 작업 단위 digest (seed가 같으면 항상 같음) */
     uint64_t mismatches;    /* digest가 기대값과 달랐던 작업 단위 수. 0이어야 정상 */
     char     variant[32];   /* 실제 사용한 코드 경로 (예: "scalar", "avx2") */
+    /* --- v2 --- */
+    uint64_t working_set_bytes;  /* 실제로 쓴 데이터 크기 (정렬 때문에 요청값보다 조금 작을 수 있음). 해당 없으면 0 */
+    char     unit_name[16];      /* 이번 결과의 op 단위. 비어 있으면 BenchInfo.unit_name.
+                                    "byte" = 대역폭, "load" = 의존 로드(지연) */
 } BenchResult;
 
 typedef struct BenchContext BenchContext;  /* 모듈 내부 구조, 러너는 내용을 모름 */

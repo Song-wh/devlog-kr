@@ -2,7 +2,16 @@ add_executable(int_kernels_test int_kernels_test.cpp)
 target_link_libraries(int_kernels_test PRIVATE int_kernels bench_options)
 add_test(NAME int_kernels COMMAND int_kernels_test)
 
+# 커널 + 모듈 DLL(import 라이브러리로 링크)의 checksum을 Python 독립 구현과 비교
+add_executable(mem_kernels_test mem_kernels_test.cpp)
+target_link_libraries(mem_kernels_test PRIVATE mem_kernels bench_mem bench_api bench_options)
+add_test(NAME mem_kernels COMMAND mem_kernels_test)
+
 # DLL을 실제로 읽어 짧게 돌려 보는 스모크 테스트 (checksum 불일치면 종료 코드 3으로 실패)
 add_test(NAME runner_info COMMAND cpu-bench-runner info)
 add_test(NAME runner_int_st COMMAND cpu-bench-runner run int --duration-ms 200 --runs 2)
 add_test(NAME runner_int_mt COMMAND cpu-bench-runner run int --mt --duration-ms 200 --runs 2 --json)
+add_test(NAME runner_mem_read_mt COMMAND cpu-bench-runner run mem --workload read --size 64M --mt --duration-ms 200 --runs 2)
+add_test(NAME runner_mem_copy COMMAND cpu-bench-runner run mem --workload copy --size 64M --duration-ms 200 --runs 2 --json)
+add_test(NAME runner_mem_write COMMAND cpu-bench-runner run mem --workload write --size 64M --threads 2 --duration-ms 200 --runs 2)
+add_test(NAME runner_mem_sweep COMMAND cpu-bench-runner sweep mem --workload latency --from 16K --to 4M --duration-ms 100 --runs 2)
