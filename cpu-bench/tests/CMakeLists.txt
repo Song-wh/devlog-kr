@@ -36,3 +36,10 @@ target_link_libraries(clock_test PRIVATE cpu_clock bench_options)
 add_test(NAME clock COMMAND clock_test)
 add_test(NAME runner_clock COMMAND cpu-bench-runner clock --json)
 add_test(NAME runner_throttle COMMAND cpu-bench-runner throttle --seconds 5 --json)
+
+# 점수 체계 v1
+add_executable(score_test score_test.cpp ${CMAKE_SOURCE_DIR}/runner/score.cpp)
+target_include_directories(score_test PRIVATE ${CMAKE_SOURCE_DIR}/runner)
+target_link_libraries(score_test PRIVATE bench_options)
+add_test(NAME score COMMAND score_test)
+add_test(NAME runner_score COMMAND cpu-bench-runner score --runs 1 --duration-ms 200 --json)

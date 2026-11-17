@@ -4,6 +4,7 @@
 //   cpu-bench-runner check [--seconds N] [--json]   측정 전 환경 점검
 //   cpu-bench-runner clock [--json]                 코어별 유효 클럭
 //   cpu-bench-runner throttle [--seconds N] [--threads N | --mt] [--json]   지속 부하 중 클럭·처리량 변화
+//   cpu-bench-runner score [--runs N] [--duration-ms N] [--json]            점수(싱글·멀티, 점수 체계 v1)
 //   cpu-bench-runner run <module id | dll 경로> [--workload W] [--size N] [--threads N | --mt]
 //                        [--duration-ms N] [--runs N] [--seed N] [--no-pin] [--json]
 //   cpu-bench-runner sweep <module> [--workload W] [--from N] [--to N] [측정 옵션...]
@@ -14,6 +15,7 @@
 #include "clock.h"
 #include "envcheck.h"
 #include "ramspec.h"
+#include "score.h"
 #include "smbios.h"
 #include "throttle.h"
 #include "topology.h"
@@ -28,6 +30,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -84,6 +87,7 @@ int usage() {
                  "  cpu-bench-runner check [--seconds N] [--json]\n"
                  "  cpu-bench-runner clock [--json]\n"
                  "  cpu-bench-runner throttle [--seconds N] [--threads N | --mt] [--json]\n"
+                 "  cpu-bench-runner score [--runs N] [--duration-ms N] [--json]\n"
                  "  cpu-bench-runner run <module id | dll path> [--workload W] [--size N] [--threads N | --mt]\n"
                  "                       [--duration-ms N] [--runs N] [--seed N] [--no-pin] [--json]\n"
                  "  cpu-bench-runner sweep <module id | dll path> [--workload W] [--from N] [--to N]\n"
@@ -790,6 +794,89 @@ int cmd_sweep(int argc, wchar_t** argv) {
     return all_ok ? 0 : 3;
 }
 
+// ---------------------------------------------------------------- score
+
+// 점수 체계 v1: 싱글·멀티 점수. 항목·기준값은 score.h
+int cmd_score(int argc, wchar_t** argv) {
+    uint32_t runs = 3, duration_ms = 2000;
+    bool json = false;
+    for (int i = 2; i < argc; ++i) {
+        std::wstring a = argv[i];
+        auto next = [&](uint32_t& v, uint32_t lo, uint32_t hi) {
+            if (i + 1 >= argc) return false;
+            wchar_t* end = nullptr;
+            unsigned long x = std::wcstoul(argv[++i], &end, 10);
+            if (!end || *end || x < lo || x > hi) return false;
+            v = uint32_t(x);
+            return true;
+        };
+        if (a == L"--json") json = true;
+        else if (a == L"--runs" && next(runs, 1, 100)) {}
+        else if (a == L"--duration-ms" && next(duration_ms, 100, 600000)) {}
+        else return usage();
+    }
+
+    struct Row { const ScoreItem* item; double value; double ratio; std::string unit; uint64_t checksum; bool ok; };
+    std::vector<Row> rows;
+    std::string cpu;
+    bool all_ok = true;
+    if (!json) std::printf("Score    : version %d, %u ms x %u runs per item (+1 warm-up)\n", kScoreVersion, duration_ms, runs);
+    for (const ScoreItem& it : score_items()) {
+        Options o;
+        o.module.assign(it.module, it.module + std::strlen(it.module));
+        if (it.workload) o.workload = it.workload;
+        o.size = it.working_set;
+        o.mt_all = it.multi_thread;
+        o.duration_ms = duration_ms;
+        o.runs = runs;
+        Session s;
+        if (!open_session(o, s)) return 1;
+        cpu = s.topo.brand;
+        if (!json) {
+            std::printf("  %s %-6s ... ", it.label, it.multi_thread ? "(MT)" : "(ST)");
+            std::fflush(stdout);
+        }
+        Measurement m;
+        int32_t rc = measure(s.mod, s.cfg, o.runs, m, [](uint32_t, const BenchResult&, double) {});
+        if (rc != BENCH_OK) {
+            report_error(rc, s);
+            return 1;
+        }
+        const double ratio = score_ratio(it, m.median);
+        rows.push_back({&it, m.median, ratio, m.display.unit, m.results.front().checksum, m.ok});
+        all_ok = all_ok && m.ok;
+        if (!json)
+            std::printf("%10.2f %-6s (reference %g, x%.3f)%s\n", m.median, m.display.unit.c_str(), it.reference, ratio,
+                        m.ok ? "" : "  CHECKSUM MISMATCH");
+    }
+    std::vector<double> st, mt;
+    for (const auto& r : rows) (r.item->multi_thread ? mt : st).push_back(r.ratio);
+    const double st_score = all_ok ? score_from_ratios(st) : 0.0;
+    const double mt_score = all_ok ? score_from_ratios(mt) : 0.0;
+
+    if (json) {
+        std::printf("{\"score_version\":%d,\"cpu\":%s,\"single\":%.0f,\"multi\":%.0f,\"valid\":%s,\"items\":[", kScoreVersion,
+                    json_str(cpu).c_str(), st_score, mt_score, all_ok ? "true" : "false");
+        for (size_t i = 0; i < rows.size(); ++i)
+            std::printf("%s{\"key\":%s,\"value\":%.4f,\"unit\":%s,\"reference\":%g,\"ratio\":%.4f,\"checksum\":\"0x%016llx\","
+                        "\"checksum_ok\":%s}",
+                        i ? "," : "", json_str(rows[i].item->key).c_str(), rows[i].value, json_str(rows[i].unit).c_str(),
+                        rows[i].item->reference, rows[i].ratio, static_cast<unsigned long long>(rows[i].checksum),
+                        rows[i].ok ? "true" : "false");
+        std::printf("]}\n");
+        return all_ok ? 0 : 3;
+    }
+    if (!all_ok) {
+        std::printf("Result   : checksum mismatch - no score (results are not trustworthy)\n");
+        return 3;
+    }
+    std::printf("Single   : %.0f\n", st_score);
+    std::printf("Multi    : %.0f\n", mt_score);
+    std::printf("(score v%d: geometric mean of item / reference x 1000. References are fixed numbers, not a specific PC.)\n",
+                kScoreVersion);
+    return 0;
+}
+
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -800,6 +887,7 @@ int wmain(int argc, wchar_t** argv) {
     if (cmd == L"sweep") return cmd_sweep(argc, argv);
     if (cmd == L"check") return cmd_check(argc, argv);
     if (cmd == L"throttle") return cmd_throttle(argc, argv);
+    if (cmd == L"score") return cmd_score(argc, argv);
     if (cmd == L"clock") return cmd_clock(argc > 2 && std::wstring(argv[2]) == L"--json");
     return usage();
 }
