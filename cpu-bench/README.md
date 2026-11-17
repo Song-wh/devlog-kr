@@ -71,6 +71,7 @@ ctest --preset msvc
 ```
 cpu-bench-runner info                       # CPU, 코어 구성, 캐시, 메모리(슬롯·채널·속도)
 cpu-bench-runner check                      # 측정 전 환경 점검: 전원, 전원 관리 옵션, 백그라운드 CPU 사용률
+cpu-bench-runner clock                      # 코어별 실제 클럭(유효 클럭)
 cpu-bench-runner run int                    # 싱글 스레드 (성능 코어 고정)
 cpu-bench-runner run int --mt               # 모든 논리 코어
 cpu-bench-runner run int --threads 4 --duration-ms 3000 --runs 7 --json
@@ -110,6 +111,14 @@ cpu-bench-runner sweep mem --workload latency   # 16 KiB → 512 MiB 지연 곡�
 메모리 정격 속도는 SMBIOS로는 알 수 없어서(보통 JEDEC 기본 속도만 나옴), 주요 제조사 파트 번호 규칙으로 읽습니다: G.Skill, Kingston FURY/HyperX, Corsair, TeamGroup, Crucial, ADATA XPG, Patriot. 모르는 형식이면 판정하지 않습니다.
 
 프로세스 사용률은 작업 관리자와 같은 방식(`NtQuerySystemInformation`)으로 읽어서, 일반 권한으로 열 수 없는 시스템 프로세스와 백신도 포함됩니다. 프로세스 목록은 화면에만 표시하고 어디에도 보내지 않습니다.
+
+## 유효 클럭 (`clock`)
+
+드라이버 없이 "지금 실제로 도는 클럭"을 잽니다. 앞 덧셈이 끝나야 다음 덧셈을 할 수 있는 의존 덧셈 체인은 1사이클에 1개씩만 실행되므로, 덧셈 수 ÷ 걸린 시간 = 클럭입니다([runner/clockchain.asm](runner/clockchain.asm). C++로 쓰면 컴파일러가 덧셈을 하나로 합쳐 버려서 어셈블리로 둠).
+
+- 쉬던 코어는 부하를 받고 최고 클럭까지 올라가는 데 5~13 ms가 걸려서, 코어마다 30 ms 동안 먼저 부하를 건 뒤 100 ms 동안 잽니다.
+- 최댓값과 중앙값을 보여 줍니다. 인텔 CPU는 동시에 바쁜 코어가 많을수록 터보 상한이 낮아져서, 백그라운드 작업이 있으면 중앙값이 내려갑니다.
+- 개발 PC(i5-14400F) 실측: P코어 최대 4.59~4.69 GHz(사양 4.7), E코어 3.49 GHz(사양 3.5).
 
 ## 개인정보
 

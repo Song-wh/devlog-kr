@@ -19,8 +19,10 @@ endforeach()
 add_library(bench_options INTERFACE)
 target_compile_definitions(bench_options INTERFACE UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
 if(MSVC)
-  target_compile_options(bench_options INTERFACE /W4 /permissive- /utf-8 /EHsc
-    $<$<CONFIG:Release,RelWithDebInfo>:/O2 /Oi /GS->)
+  # C/C++에만 적용 (MASM 파일에는 넘기지 않는다)
+  target_compile_options(bench_options INTERFACE
+    $<$<COMPILE_LANGUAGE:C,CXX>:/W4 /permissive- /utf-8 /EHsc>
+    $<$<AND:$<COMPILE_LANGUAGE:C,CXX>,$<CONFIG:Release,RelWithDebInfo>>:/O2 /Oi /GS->)
   # 정적 CRT: 배포 시 VC++ 재배포 패키지 설치가 필요 없게 한다
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()

@@ -9,6 +9,7 @@
 // 측정 절차: 프로세스 우선순위 HIGH → 워밍업 1회 → N회 측정 → 중앙값 채택, 변동계수(CV) 계산
 // sweep은 작업 데이터 크기를 from부터 2배씩 to까지 늘려 가며 크기마다 같은 절차를 반복한다.
 #include "bench_api.h"
+#include "clock.h"
 #include "envcheck.h"
 #include "ramspec.h"
 #include "smbios.h"
@@ -147,6 +148,43 @@ int cmd_check(int argc, wchar_t** argv) {
     }
     if (warnings.empty()) std::printf("Result   : ready to measure\n");
     for (const auto& w : warnings) std::printf("Warning  : %s\n", w.message.c_str());
+    return 0;
+}
+
+// ---------------------------------------------------------------- clock
+
+// 코어마다 한 번씩 스레드를 옮겨 가며, 다른 코어가 쉬는 상태의 싱글 코어 유효 클럭을 잰다.
+int cmd_clock(bool json) {
+    Topology topo;
+    std::string err;
+    if (!query_topology(topo, err)) {
+        std::fprintf(stderr, "error: %s\n", err.c_str());
+        return 1;
+    }
+    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    struct Row { uint32_t core; uint16_t group; uint8_t number; bool perf; CoreClock clk; };
+    std::vector<Row> rows;
+    for (const auto& c : topo.cpus) {
+        if (!c.first_in_core) continue;
+        if (!pin_current_thread(c)) continue;
+        Sleep(1);  // 새 코어로 옮겨 가도록
+        rows.push_back({c.core, c.group, c.number, c.efficiency == topo.max_efficiency, measure_core_clock()});
+    }
+    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.core < b.core; });
+    if (json) {
+        std::printf("{\"cpu\":%s,\"cores\":[", json_str(topo.brand).c_str());
+        for (size_t i = 0; i < rows.size(); ++i)
+            std::printf("%s{\"core\":%u,\"group\":%u,\"cpu\":%u,\"type\":\"%s\",\"max_ghz\":%.3f,\"median_ghz\":%.3f}",
+                        i ? "," : "", rows[i].core, rows[i].group, rows[i].number,
+                        topo.hybrid ? (rows[i].perf ? "P" : "E") : "", rows[i].clk.max_ghz, rows[i].clk.median_ghz);
+        std::printf("]}\n");
+        return 0;
+    }
+    std::printf("CPU      : %s\n", topo.brand.c_str());
+    std::printf("Single-core effective clock, 30 ms warm-up + 100 ms sampling per core (max / median):\n");
+    for (const auto& r : rows)
+        std::printf("  core %2u%s (cpu %2u): %.2f / %.2f GHz\n", r.core, topo.hybrid ? (r.perf ? " P" : " E") : "",
+                    r.number, r.clk.max_ghz, r.clk.median_ghz);
     return 0;
 }
 
@@ -666,5 +704,6 @@ int wmain(int argc, wchar_t** argv) {
     if (cmd == L"run") return cmd_run(argc, argv);
     if (cmd == L"sweep") return cmd_sweep(argc, argv);
     if (cmd == L"check") return cmd_check(argc, argv);
+    if (cmd == L"clock") return cmd_clock(argc > 2 && std::wstring(argv[2]) == L"--json");
     return usage();
 }

@@ -29,3 +29,9 @@ add_executable(ramspec_test ramspec_test.cpp ${CMAKE_SOURCE_DIR}/runner/ramspec.
 target_include_directories(ramspec_test PRIVATE ${CMAKE_SOURCE_DIR}/runner)
 target_link_libraries(ramspec_test PRIVATE bench_options)
 add_test(NAME ramspec COMMAND ramspec_test)
+
+# 유효 클럭 측정 (MASM 덧셈 체인)
+add_executable(clock_test clock_test.cpp)
+target_link_libraries(clock_test PRIVATE cpu_clock bench_options)
+add_test(NAME clock COMMAND clock_test)
+add_test(NAME runner_clock COMMAND cpu-bench-runner clock --json)
