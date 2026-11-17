@@ -851,9 +851,10 @@ int cmd_sweep(int argc, wchar_t** argv) {
 // ---------------------------------------------------------------- score
 
 // 점수 체계 v1: 싱글·멀티 점수. 항목·기준값은 score.h
-// 측정 절차: 항목마다 워밍업 1회 + 5회, 중앙값. 다른 프로그램이 CPU를 10% 넘게 쓴 회차는 버리고 다시 잰다
+// 측정 절차: 항목마다 워밍업 1회 + 5회, 중앙값. 다른 프로그램이 CPU를 7% 넘게 쓴 회차는 버리고 다시 잰다
 // (항목당 최대 5번). 싱글 메모리 읽기가 가끔 10% 떨어지는 회차 때문에 3회 중앙값으로는 싱글 점수가 흔들렸다(조사 006).
-constexpr double kScoreMaxOthersPercent = 10.0;
+// 통제 실험: 바쁜 프로그램 하나만 띄워도 싱글 정수가 평균 2.8% 떨어졌고, 그때 다른 프로그램 사용률은 평균 10.6%였다.
+constexpr double kScoreMaxOthersPercent = 7.0;  // 개발 PC 평소 3%대, 바쁜 프로그램 하나(16개 중 1개)면 10% 안팎 → 그 경우를 걸러 낸다
 constexpr uint32_t kScoreMaxRetries = 5;
 
 int cmd_score(int argc, wchar_t** argv) {
