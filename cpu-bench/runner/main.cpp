@@ -545,9 +545,37 @@ bool parse_options(int argc, wchar_t** argv, bool sweep, Options& o) {
 }
 
 // 측정 한 세트: bench_init → 워밍업 1회 → N회 → bench_shutdown
+// 측정 1회 동안 다른 프로그램이 쓴 CPU: 시스템 전체 사용 시간에서 이 프로세스 사용 시간을 뺀 값
+struct CpuSample {
+    uint64_t idle = 0, total = 0, self = 0;
+};
+
+uint64_t ft_u64(const FILETIME& f) { return (uint64_t(f.dwHighDateTime) << 32) | f.dwLowDateTime; }
+
+CpuSample sample_cpu() {
+    CpuSample s;
+    FILETIME i, k, u, c, e, pk, pu;
+    if (GetSystemTimes(&i, &k, &u)) {
+        s.idle = ft_u64(i);
+        s.total = ft_u64(k) + ft_u64(u);  // 커널 시간에 idle이 포함됨
+    }
+    if (GetProcessTimes(GetCurrentProcess(), &c, &e, &pk, &pu)) s.self = ft_u64(pk) + ft_u64(pu);
+    return s;
+}
+
+// 전체 CPU 용량 대비 % (논리 코어 전부 = 100%)
+double other_cpu_percent(const CpuSample& a, const CpuSample& b) {
+    const uint64_t total = b.total - a.total;
+    if (!total) return 0.0;
+    const uint64_t busy = total - std::min(total, b.idle - a.idle);
+    const uint64_t self = b.self - a.self;
+    return 100.0 * double(busy > self ? busy - self : 0) / double(total);
+}
+
 struct Measurement {
     std::vector<BenchResult> results;
     std::vector<double> values;  // 표시 단위 값
+    std::vector<double> others;  // 회차마다 다른 프로그램이 쓴 CPU %
     Display display;
     double median = 0, cv = 0;
     uint64_t mismatches = 0;
@@ -563,7 +591,9 @@ int32_t measure(const Module& mod, const BenchConfig& cfg, uint32_t runs, Measur
     for (uint32_t r = 0; r <= runs; ++r) {  // r == 0은 워밍업
         BenchResult res{};
         res.struct_size = sizeof(res);
+        const CpuSample before = sample_cpu();
         rc = mod.run(ctx, &res, nullptr, nullptr, nullptr);
+        const double others = other_cpu_percent(before, sample_cpu());
         if (rc != BENCH_OK && rc != BENCH_E_CHECKSUM) {
             mod.shutdown(ctx);
             return rc;
@@ -573,6 +603,7 @@ int32_t measure(const Module& mod, const BenchConfig& cfg, uint32_t runs, Measur
         if (m.results.empty()) m.display = display_of(res, mod.info);
         m.results.push_back(res);
         m.values.push_back(display_value(res, m.display));
+        m.others.push_back(others);
         on_run(r, res, m.values.back());
     }
     mod.shutdown(ctx);
@@ -702,9 +733,9 @@ int cmd_run(int argc, wchar_t** argv) {
             const BenchResult& r = m.results[i];
             ops.push_back(r.ops_per_sec);
             std::printf("%s{\"ops_per_sec\":%.3f,\"value\":%.4f,\"iterations\":%llu,\"elapsed_s\":%.6f,"
-                        "\"mismatches\":%llu}",
+                        "\"mismatches\":%llu,\"others_cpu_percent\":%.2f}",
                         i ? "," : "", r.ops_per_sec, m.values[i], static_cast<unsigned long long>(r.iterations),
-                        r.elapsed_s, static_cast<unsigned long long>(r.mismatches));
+                        r.elapsed_s, static_cast<unsigned long long>(r.mismatches), m.others[i]);
         }
         std::printf("],\"median_ops_per_sec\":%.3f,\"median_value\":%.4f,\"cv_percent\":%.3f,"
                     "\"checksum\":\"0x%016llx\",\"checksum_ok\":%s}\n",
