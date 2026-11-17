@@ -10,6 +10,7 @@
 // sweep은 작업 데이터 크기를 from부터 2배씩 to까지 늘려 가며 크기마다 같은 절차를 반복한다.
 #include "bench_api.h"
 #include "envcheck.h"
+#include "ramspec.h"
 #include "smbios.h"
 #include "topology.h"
 
@@ -101,7 +102,12 @@ int cmd_check(int argc, wchar_t** argv) {
     }
     if (!json) std::printf("Checking the environment (sampling idle CPU use for %.1f s)...\n", seconds);
     const EnvReport r = check_environment(seconds, 5);
-    const auto warnings = evaluate(r);
+    auto warnings = evaluate(r);
+    MemoryInfo mem;
+    std::string mem_err;
+    const bool mem_ok = query_memory(mem, mem_err);
+    if (mem_ok)
+        for (auto& w : evaluate_memory(mem)) warnings.push_back(std::move(w));
     if (json) {
         std::printf("{\"power\":{\"known\":%s,\"on_ac\":%s,\"has_battery\":%s,\"battery_percent\":%d},"
                     "\"power_plan\":{\"guid\":%s,\"name\":%s,\"kind\":%s,\"overlay\":%s,\"max_processor_state\":%d,"
@@ -129,6 +135,16 @@ int cmd_check(int argc, wchar_t** argv) {
         std::printf("CPU state: min %d%%, max %d%% (%s)\n", r.min_processor_state, r.max_processor_state, r.on_ac ? "AC" : "battery");
     std::printf("Idle CPU : %.1f%% busy over %.1f s (processes %.1f%%, rest is interrupts/DPC)\n", r.busy_percent, r.sample_seconds, r.process_percent);
     for (const auto& p : r.top) std::printf("  %5.1f%%  %s (pid %u)\n", p.cpu_percent, p.name.c_str(), p.pid);
+    if (mem_ok) {
+        const unsigned ch = mem.channels();
+        uint32_t speed = 0;
+        for (const auto& m : mem.modules)
+            if (m.size_bytes) speed = m.configured_speed;
+        std::printf("Memory   : %zu module(s), %s, %u MT/s\n", mem.populated(),
+                    ch == 1 ? "single channel" : ch == 2 ? "dual channel" : ch ? "multi channel" : "channel layout unknown", speed);
+    } else {
+        std::printf("Memory   : unavailable (%s)\n", mem_err.c_str());
+    }
     if (warnings.empty()) std::printf("Result   : ready to measure\n");
     for (const auto& w : warnings) std::printf("Warning  : %s\n", w.message.c_str());
     return 0;
@@ -202,6 +218,11 @@ int cmd_info(bool json) {
                     form_factor_name(m.form_factor), m.max_speed, m.configured_speed,
                     m.channel.empty() ? "" : ", channel ", m.channel.c_str(),
                     m.part_number.empty() ? "" : ", ", m.part_number.c_str());
+        const RatedSpeed rs = rated_speed_from_part(m.part_number);
+        if (rs.mts && !rs.jedec_only)
+            std::printf("  %-22s  rated %u MT/s per part number (%s)\n", "", rs.mts, rs.brand);
+        else if (rs.jedec_only)
+            std::printf("  %-22s  standard (JEDEC) module per part number (%s)\n", "", rs.brand);
     }
     return 0;
 }

@@ -23,3 +23,9 @@ target_link_libraries(smbios_test PRIVATE bench_options)
 add_test(NAME smbios COMMAND smbios_test)
 add_test(NAME runner_info_json COMMAND cpu-bench-runner info --json)
 add_test(NAME runner_check COMMAND cpu-bench-runner check --seconds 1 --json)
+
+# 메모리 파트 번호 → 정격 속도, 메모리 진단
+add_executable(ramspec_test ramspec_test.cpp ${CMAKE_SOURCE_DIR}/runner/ramspec.cpp ${CMAKE_SOURCE_DIR}/runner/envcheck.cpp ${CMAKE_SOURCE_DIR}/runner/smbios.cpp)
+target_include_directories(ramspec_test PRIVATE ${CMAKE_SOURCE_DIR}/runner)
+target_link_libraries(ramspec_test PRIVATE bench_options)
+add_test(NAME ramspec COMMAND ramspec_test)

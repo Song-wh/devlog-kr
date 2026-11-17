@@ -1,4 +1,6 @@
 #include "envcheck.h"
+#include "ramspec.h"
+#include "smbios.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -194,6 +196,41 @@ std::vector<EnvWarning> evaluate(const EnvReport& r) {
         std::snprintf(b, sizeof(b), "Background CPU use is %.1f%% while idle. Multi-thread scores can drop by about that much.",
                       r.busy_percent);
         w.push_back({"background", b});
+    }
+    return w;
+}
+
+std::vector<EnvWarning> evaluate_memory(const MemoryInfo& m) {
+    std::vector<EnvWarning> w;
+    const size_t n = m.populated();
+    if (n == 0) return w;
+    char b[256];
+    if (n == 1) {
+        w.push_back({"single_channel", "Only one memory module is installed, so memory runs in single channel "
+                                       "(about half the bandwidth of dual channel)."});
+    } else if (m.channels() == 1) {
+        std::string ch;
+        for (const auto& x : m.modules)
+            if (x.size_bytes) ch = x.channel;
+        std::snprintf(b, sizeof(b), "All %zu modules are in channel %s. Move them to the slots the motherboard manual "
+                                    "recommends (usually A2 and B2) for dual channel.", n, ch.c_str());
+        w.push_back({"same_channel", b});
+    }
+    for (const auto& x : m.modules) {
+        if (!x.size_bytes || !x.configured_speed) continue;
+        const RatedSpeed r = rated_speed_from_part(x.part_number);
+        if (r.mts > x.configured_speed) {
+            std::snprintf(b, sizeof(b), "%s (%s) is rated %u MT/s but runs at %u MT/s. XMP/EXPO may be off in the BIOS.",
+                          x.part_number.c_str(), r.brand, r.mts, x.configured_speed);
+            w.push_back({"xmp_off", b});
+            break;  // 같은 키트면 한 번만
+        }
+        if (x.max_speed && x.configured_speed < x.max_speed) {
+            std::snprintf(b, sizeof(b), "%s runs at %u MT/s, below its own %u MT/s (mixed modules or a platform limit).",
+                          x.device_locator.c_str(), x.configured_speed, x.max_speed);
+            w.push_back({"below_jedec", b});
+            break;
+        }
     }
     return w;
 }

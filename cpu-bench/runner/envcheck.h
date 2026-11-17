@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+struct MemoryInfo;
+
 struct ProcessLoad {
     std::string name;     // 실행 파일 이름만 (경로·명령줄은 읽지 않음)
     uint32_t pid = 0;
@@ -33,9 +35,13 @@ struct EnvReport {
 };
 
 struct EnvWarning {
-    std::string id;       // "on_battery", "power_saver", "efficiency_mode", "max_state", "background"
+    std::string id;       // "on_battery", "power_saver", "efficiency_mode", "max_state", "background",
+                          // "single_channel", "same_channel", "xmp_off", "below_jedec"
     std::string message;  // 영어 (콘솔 코드 페이지 문제)
 };
 
 EnvReport check_environment(double sample_seconds, size_t top_n);
 std::vector<EnvWarning> evaluate(const EnvReport& r);
+
+// 메모리 진단: 싱글 채널, 같은 채널에 몰린 모듈, 정격(파트 번호)보다 낮은 설정 속도(XMP/EXPO 꺼짐 의심)
+std::vector<EnvWarning> evaluate_memory(const MemoryInfo& m);
