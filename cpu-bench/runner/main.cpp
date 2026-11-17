@@ -87,7 +87,7 @@ int usage() {
                  "  cpu-bench-runner check [--seconds N] [--json]\n"
                  "  cpu-bench-runner clock [--json]\n"
                  "  cpu-bench-runner throttle [--seconds N] [--threads N | --mt] [--json]\n"
-                 "  cpu-bench-runner score [--runs N] [--duration-ms N] [--json]\n"
+                 "  cpu-bench-runner score [--runs N] [--duration-ms N] [--json] [--progress]\n"
                  "  cpu-bench-runner run <module id | dll path> [--workload W] [--size N] [--threads N | --mt]\n"
                  "                       [--duration-ms N] [--runs N] [--seed N] [--no-pin] [--json]\n"
                  "  cpu-bench-runner sweep <module id | dll path> [--workload W] [--from N] [--to N]\n"
@@ -799,7 +799,7 @@ int cmd_sweep(int argc, wchar_t** argv) {
 // 점수 체계 v1: 싱글·멀티 점수. 항목·기준값은 score.h
 int cmd_score(int argc, wchar_t** argv) {
     uint32_t runs = 3, duration_ms = 2000;
-    bool json = false;
+    bool json = false, progress = false;
     for (int i = 2; i < argc; ++i) {
         std::wstring a = argv[i];
         auto next = [&](uint32_t& v, uint32_t lo, uint32_t hi) {
@@ -811,6 +811,7 @@ int cmd_score(int argc, wchar_t** argv) {
             return true;
         };
         if (a == L"--json") json = true;
+        else if (a == L"--progress") progress = true;
         else if (a == L"--runs" && next(runs, 1, 100)) {}
         else if (a == L"--duration-ms" && next(duration_ms, 100, 600000)) {}
         else return usage();
@@ -835,6 +836,11 @@ int cmd_score(int argc, wchar_t** argv) {
         if (!json) {
             std::printf("  %s %-6s ... ", it.label, it.multi_thread ? "(MT)" : "(ST)");
             std::fflush(stdout);
+        }
+        if (progress) {  // 화면 앱용: stderr에 한 줄 JSON
+            std::fprintf(stderr, "{\"progress\":%zu,\"total\":%zu,\"item\":%s}\n", rows.size(), score_items().size(),
+                         json_str(it.key).c_str());
+            std::fflush(stderr);
         }
         Measurement m;
         int32_t rc = measure(s.mod, s.cfg, o.runs, m, [](uint32_t, const BenchResult&, double) {});
