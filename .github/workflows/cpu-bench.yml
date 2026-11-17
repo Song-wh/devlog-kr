@@ -29,6 +29,9 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }}
       - name: Test (correctness + short smoke run)
         run: ctest --preset ${{ matrix.preset }}
+      - name: App build (WPF, .NET 8)
+        if: matrix.preset == 'msvc'
+        run: dotnet build app -c Release
       - name: Runner output
         run: |
           build/${{ matrix.preset }}/bin/cpu-bench-runner.exe info

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- cpu-bench 화면 앱 (WPF, .NET 8). 측정은 옆에 있는 cpu-bench-runner.exe를 실행하고 JSON 출력을 읽는다. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>cpu-bench</AssemblyName>
+    <RootNamespace>CpuBench.App</RootNamespace>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <!-- 개발 중: C++ 빌드 결과(러너와 모듈 DLL)를 앱 출력 폴더로 복사. 없으면 건너뜀 -->
+  <ItemGroup>
+    <None Include="..\build\msvc\bin\cpu-bench-runner.exe;..\build\msvc\bin\bench_*.dll"
+          Condition="Exists('..\build\msvc\bin\cpu-bench-runner.exe')"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+</Project>
