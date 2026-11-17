@@ -272,8 +272,9 @@ int cmd_throttle(int argc, wchar_t** argv) {
     std::printf("\n");
     if (r.p_drop_at >= 0) std::printf("Note     : %s first dropped below the start level at %d s\n", p_label, r.p_drop_at);
     if (r.e_drop_at >= 0)
-        std::printf("Note     : E clock first dropped below the start level at %d s (%+.1f%%). If throughput holds, this is\n"
-                    "           usually the CPU's own power limit, not overheating.\n", r.e_drop_at, r.e_change);
+        std::printf("Note     : E clock first dropped below the start level at %d s (%+.1f%%). This can come from the\n"
+                    "           CPU's power limit or its temperature; the effect on throughput is shown above.\n",
+                    r.e_drop_at, r.e_change);
     if (r.throttled)
         std::printf("Warning  : performance dropped more than %.0f%% under sustained load. Check CPU cooling and BIOS power limits.\n",
                     kThrottleWarnPercent);

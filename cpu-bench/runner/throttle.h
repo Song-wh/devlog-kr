@@ -27,7 +27,7 @@ struct ThrottleResult {
     double p_change = 0, e_change = 0;
     int p_drop_at = -1, e_drop_at = -1;  // 클럭이 시작 구간보다 3% 넘게 처음 내려간 초 (-1 = 없음)
     // 판정: 실제 성능(처리량)이나 성능 코어 클럭이 kThrottleWarnPercent 넘게 떨어지면 경고.
-    // 효율 코어만 내려가는 건 CPU 전원 제한(일정 시간 뒤 PL2 → PL1) 같은 정상 동작일 수 있어 정보로만 알린다.
+    // 효율 코어만 내려가는 건 전원 제한이나 온도 때문일 수 있고(드라이버 없이는 구분 불가), 처리량 영향이 작아 안내로만 알린다.
     bool throttled = false;
 };
 
