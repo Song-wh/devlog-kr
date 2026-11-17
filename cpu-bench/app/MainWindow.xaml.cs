@@ -10,6 +10,7 @@ public partial class MainWindow : Window
 {
     private readonly Runner? _runner = Runner.FindNextToApp();
     private readonly List<FindingRow> _findings = new();
+    private readonly ResultStore _store = new();
 
     // 점수 항목 키 → 화면 이름
     private static readonly Dictionary<string, string> ItemNames = new()
@@ -24,7 +25,11 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        Loaded += async (_, _) => await LoadInfoAsync();
+        Loaded += async (_, _) =>
+        {
+            ShowHistory();
+            await LoadInfoAsync();
+        };
     }
 
     private async Task LoadInfoAsync()
@@ -82,6 +87,7 @@ public partial class MainWindow : Window
         var r = await _runner.RunAsync("check --json");
         SetBusy(false, r.Json is null ? $"환경 점검 실패: {r.StdErr.Trim()}" : "환경 점검 완료");
         if (r.Json is null) return;
+        _store.Save("check", r.Json.RootElement);
         ShowFindings(Diagnosis.FromCheck(r.Json.RootElement), f => !f.Title.Contains("쓰로틀링"));
     }
 
@@ -104,6 +110,8 @@ public partial class MainWindow : Window
             return;
         }
         var j = r.Json.RootElement;
+        _store.Save("score", j);
+        ShowHistory();
         bool valid = j.GetProperty("valid").GetBoolean();
         SingleText.Text = valid ? j.GetProperty("single").GetDouble().ToString("0") : "무효";
         MultiText.Text = valid ? j.GetProperty("multi").GetDouble().ToString("0") : "무효";
@@ -128,7 +136,26 @@ public partial class MainWindow : Window
         var r = await _runner.RunAsync("throttle --seconds 60 --json");
         SetBusy(false, r.Json is null ? $"쓰로틀링 검사 실패: {r.StdErr.Trim()}" : "쓰로틀링 검사 완료");
         if (r.Json is null) return;
+        _store.Save("throttle", r.Json.RootElement);
         ShowFindings(new[] { Diagnosis.FromThrottle(r.Json.RootElement) }, f => f.Title.Contains("쓰로틀링"));
+    }
+
+    private void ShowHistory()
+    {
+        var list = _store.LoadScores(10);
+        History.ItemsSource = list.Select(h => new
+        {
+            When = $"{h.When:yyyy-MM-dd HH:mm}  (v{h.Version})",
+            Single = h.Valid ? $"싱글 {h.Single:0}" : "무효",
+            Multi = h.Valid ? $"멀티 {h.Multi:0}" : "",
+        }).ToList();
+        HistoryHint.Visibility = list.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void OpenResults_Click(object sender, RoutedEventArgs e)
+    {
+        System.IO.Directory.CreateDirectory(_store.Folder);
+        Process.Start(new ProcessStartInfo(_store.Folder) { UseShellExecute = true });
     }
 
     private void Settings_Click(object sender, RoutedEventArgs e)

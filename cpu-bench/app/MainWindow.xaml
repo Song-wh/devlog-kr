@@ -68,6 +68,31 @@
                                        Text="점수 체계 v1: 항목마다 고정 기준값 대비 비율의 기하평균 × 1000. 기준은 특정 PC가 아니라 고정된 숫자입니다." />
                         </StackPanel>
                     </Border>
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="기록" FontSize="18" FontWeight="Bold" />
+                            <TextBlock x:Name="HistoryHint" Margin="0,8,0,0" Foreground="{StaticResource Muted}" Text="점수를 측정하면 이 PC에 기록이 남습니다." />
+                            <ItemsControl x:Name="History" Margin="0,8,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,3">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="110" />
+                                                <ColumnDefinition Width="110" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding When}" Foreground="{StaticResource Muted}" />
+                                            <TextBlock Grid.Column="1" Text="{Binding Single}" FontFamily="Cascadia Mono, Consolas" />
+                                            <TextBlock Grid.Column="2" Text="{Binding Multi}" FontFamily="Cascadia Mono, Consolas" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Margin="0,10,0,0" FontSize="13" Foreground="{StaticResource Muted}">
+                                <Run Text="결과 파일은 이 PC에만 저장됩니다. " /><Hyperlink Click="OpenResults_Click" Foreground="{StaticResource Accent}">폴더 열기</Hyperlink>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </ScrollViewer>
 
