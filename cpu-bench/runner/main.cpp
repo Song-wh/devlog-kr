@@ -580,10 +580,20 @@ struct Measurement {
     double median = 0, cv = 0;
     uint64_t mismatches = 0;
     bool ok = false;  // 회차 간 checksum 같음 + 불일치 0
+    uint32_t retries = 0;      // 방해 때문에 다시 잰 횟수
+    double others_max = 0;     // 채택한 회차 중 다른 프로그램 사용률 최댓값
+};
+
+// 다른 프로그램이 max_others_percent를 넘게 CPU를 쓴 회차는 버리고 다시 잰다(최대 max_retries번).
+// 기본값(음수)이면 다시 재지 않는다.
+struct RetryPolicy {
+    double max_others_percent = -1;
+    uint32_t max_retries = 0;
 };
 
 template <class OnRun>
-int32_t measure(const Module& mod, const BenchConfig& cfg, uint32_t runs, Measurement& m, OnRun&& on_run) {
+int32_t measure(const Module& mod, const BenchConfig& cfg, uint32_t runs, Measurement& m, OnRun&& on_run,
+                RetryPolicy policy = {}) {
     BenchContext* ctx = nullptr;
     int32_t rc = mod.init(&cfg, &ctx);
     if (rc != BENCH_OK) return rc;
@@ -600,6 +610,12 @@ int32_t measure(const Module& mod, const BenchConfig& cfg, uint32_t runs, Measur
         }
         if (rc == BENCH_E_CHECKSUM) worst = rc;
         if (r == 0) continue;
+        if (policy.max_others_percent >= 0 && others > policy.max_others_percent && m.retries < policy.max_retries) {
+            ++m.retries;  // 이 회차는 버리고 같은 번호로 다시
+            --r;
+            continue;
+        }
+        m.others_max = std::max(m.others_max, others);
         if (m.results.empty()) m.display = display_of(res, mod.info);
         m.results.push_back(res);
         m.values.push_back(display_value(res, m.display));
@@ -828,8 +844,13 @@ int cmd_sweep(int argc, wchar_t** argv) {
 // ---------------------------------------------------------------- score
 
 // 점수 체계 v1: 싱글·멀티 점수. 항목·기준값은 score.h
+// 측정 절차: 항목마다 워밍업 1회 + 5회, 중앙값. 다른 프로그램이 CPU를 10% 넘게 쓴 회차는 버리고 다시 잰다
+// (항목당 최대 5번). 싱글 메모리 읽기가 가끔 10% 떨어지는 회차 때문에 3회 중앙값으로는 싱글 점수가 흔들렸다(조사 006).
+constexpr double kScoreMaxOthersPercent = 10.0;
+constexpr uint32_t kScoreMaxRetries = 5;
+
 int cmd_score(int argc, wchar_t** argv) {
-    uint32_t runs = 3, duration_ms = 2000;
+    uint32_t runs = 5, duration_ms = 2000;
     bool json = false, progress = false;
     for (int i = 2; i < argc; ++i) {
         std::wstring a = argv[i];
@@ -848,7 +869,10 @@ int cmd_score(int argc, wchar_t** argv) {
         else return usage();
     }
 
-    struct Row { const ScoreItem* item; double value; double ratio; std::string unit; uint64_t checksum; bool ok; };
+    struct Row {
+        const ScoreItem* item; double value; double ratio; std::string unit; uint64_t checksum; bool ok;
+        uint32_t retries; double others_max;
+    };
     std::vector<Row> rows;
     std::string cpu;
     bool all_ok = true;
@@ -874,17 +898,21 @@ int cmd_score(int argc, wchar_t** argv) {
             std::fflush(stderr);
         }
         Measurement m;
-        int32_t rc = measure(s.mod, s.cfg, o.runs, m, [](uint32_t, const BenchResult&, double) {});
+        int32_t rc = measure(s.mod, s.cfg, o.runs, m, [](uint32_t, const BenchResult&, double) {},
+                             RetryPolicy{kScoreMaxOthersPercent, kScoreMaxRetries});
         if (rc != BENCH_OK) {
             report_error(rc, s);
             return 1;
         }
         const double ratio = score_ratio(it, m.median);
-        rows.push_back({&it, m.median, ratio, m.display.unit, m.results.front().checksum, m.ok});
+        rows.push_back({&it, m.median, ratio, m.display.unit, m.results.front().checksum, m.ok, m.retries, m.others_max});
         all_ok = all_ok && m.ok;
-        if (!json)
-            std::printf("%10.2f %-6s (reference %g, x%.3f)%s\n", m.median, m.display.unit.c_str(), it.reference, ratio,
+        if (!json) {
+            std::printf("%10.2f %-6s (reference %g, x%.3f)%s", m.median, m.display.unit.c_str(), it.reference, ratio,
                         m.ok ? "" : "  CHECKSUM MISMATCH");
+            if (m.retries) std::printf("  [%u run(s) redone: other programs were busy]", m.retries);
+            std::printf("\n");
+        }
     }
     std::vector<double> st, mt;
     for (const auto& r : rows) (r.item->multi_thread ? mt : st).push_back(r.ratio);
@@ -892,14 +920,18 @@ int cmd_score(int argc, wchar_t** argv) {
     const double mt_score = all_ok ? score_from_ratios(mt) : 0.0;
 
     if (json) {
-        std::printf("{\"score_version\":%d,\"cpu\":%s,\"single\":%.0f,\"multi\":%.0f,\"valid\":%s,\"items\":[", kScoreVersion,
-                    json_str(cpu).c_str(), st_score, mt_score, all_ok ? "true" : "false");
+        bool disturbed = false;  // 다시 재기를 다 써도 방해가 남은 항목이 있음
+        for (const auto& r : rows) disturbed = disturbed || r.others_max > kScoreMaxOthersPercent;
+        std::printf("{\"score_version\":%d,\"cpu\":%s,\"single\":%.0f,\"multi\":%.0f,\"valid\":%s,\"disturbed\":%s,"
+                    "\"max_others_percent\":%g,\"items\":[",
+                    kScoreVersion, json_str(cpu).c_str(), st_score, mt_score, all_ok ? "true" : "false",
+                    disturbed ? "true" : "false", kScoreMaxOthersPercent);
         for (size_t i = 0; i < rows.size(); ++i)
             std::printf("%s{\"key\":%s,\"value\":%.4f,\"unit\":%s,\"reference\":%g,\"ratio\":%.4f,\"checksum\":\"0x%016llx\","
-                        "\"checksum_ok\":%s}",
+                        "\"checksum_ok\":%s,\"retries\":%u,\"others_max_percent\":%.2f}",
                         i ? "," : "", json_str(rows[i].item->key).c_str(), rows[i].value, json_str(rows[i].unit).c_str(),
                         rows[i].item->reference, rows[i].ratio, static_cast<unsigned long long>(rows[i].checksum),
-                        rows[i].ok ? "true" : "false");
+                        rows[i].ok ? "true" : "false", rows[i].retries, rows[i].others_max);
         std::printf("]}\n");
         return all_ok ? 0 : 3;
     }

@@ -15,7 +15,7 @@
         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,16">
             <StackPanel Orientation="Horizontal">
                 <Button x:Name="CheckButton" Content="환경 점검 (3초)" Click="CheckButton_Click" />
-                <Button x:Name="ScoreButton" Content="점수 측정 (약 1분)" Click="ScoreButton_Click" />
+                <Button x:Name="ScoreButton" Content="점수 측정 (약 1분 30초)" Click="ScoreButton_Click" />
                 <Button x:Name="ThrottleButton" Content="쓰로틀링 검사 (1분)" Click="ThrottleButton_Click" />
             </StackPanel>
             <ProgressBar x:Name="Progress" Height="6" Margin="0,14,0,0" Minimum="0" Maximum="1" Visibility="Hidden"

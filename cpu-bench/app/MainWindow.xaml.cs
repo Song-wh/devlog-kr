@@ -125,7 +125,11 @@ public partial class MainWindow : Window
                 Value = $"{it.GetProperty("value").GetDouble():0.##} {unit}  (기준 {it.GetProperty("reference").GetDouble():0.##}, ×{it.GetProperty("ratio").GetDouble():0.00})",
             };
         }).ToList();
-        SetBusy(false, valid ? $"점수 측정 완료 (점수 체계 v{j.GetProperty("score_version").GetInt32()})"
+        int retries = j.GetProperty("items").EnumerateArray().Sum(it => it.TryGetProperty("retries", out var rr) ? rr.GetInt32() : 0);
+        bool disturbed = j.TryGetProperty("disturbed", out var d) && d.GetBoolean();
+        string note = disturbed ? " · 측정 중 다른 프로그램이 CPU를 많이 써서 결과가 낮게 나왔을 수 있습니다. 다른 프로그램을 닫고 다시 재 보세요."
+                    : retries > 0 ? $" · 다른 프로그램 때문에 {retries}회를 다시 쟀습니다." : "";
+        SetBusy(false, valid ? $"점수 측정 완료 (점수 체계 v{j.GetProperty("score_version").GetInt32()}){note}"
                              : "계산 결과가 기대값과 달라서 점수를 내지 않았습니다. 오버클럭이나 메모리 설정이 불안정할 수 있습니다.");
     }
 
