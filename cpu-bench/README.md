@@ -70,6 +70,7 @@ ctest --preset msvc
 
 ```
 cpu-bench-runner info                       # CPU, 코어 구성, 캐시, 메모리(슬롯·채널·속도)
+cpu-bench-runner check                      # 측정 전 환경 점검: 전원, 전원 관리 옵션, 백그라운드 CPU 사용률
 cpu-bench-runner run int                    # 싱글 스레드 (성능 코어 고정)
 cpu-bench-runner run int --mt               # 모든 논리 코어
 cpu-bench-runner run int --threads 4 --duration-ms 3000 --runs 7 --json
@@ -92,6 +93,19 @@ cpu-bench-runner sweep mem --workload latency   # 16 KiB → 512 MiB 지연 곡�
 `sweep`은 `--size` 대신 `--from`(기본 16K), `--to`(기본 512M)를 받고, 측정 1회 500 ms × 3회가 기본입니다.
 
 종료 코드: `0` 정상, `1` 실행 오류, `2` 사용법 오류, `3` checksum 불일치
+
+## 측정 전 환경 점검 (`check`)
+
+점수가 낮게 나오는 흔한 원인을 측정 전에 확인합니다. **읽기만 하고 설정은 바꾸지 않습니다.**
+
+| 항목 | 경고 조건 |
+|---|---|
+| 전원 | 배터리로 동작 중 (노트북은 배터리에서 클럭을 낮춤) |
+| 전원 관리 옵션 / 전원 모드 | 절전, 또는 Windows 전원 모드가 "최고의 전원 효율" |
+| 최대 프로세서 상태 | 100% 미만 (보통 터보 부스트가 꺼짐) |
+| 유휴 상태 CPU 사용률 | 3% 초과 (그만큼 멀티스레드 점수가 떨어질 수 있음). 사용률이 높은 프로세스 상위 5개를 보여 줌 |
+
+프로세스 사용률은 작업 관리자와 같은 방식(`NtQuerySystemInformation`)으로 읽어서, 일반 권한으로 열 수 없는 시스템 프로세스와 백신도 포함됩니다. 프로세스 목록은 화면에만 표시하고 어디에도 보내지 않습니다.
 
 ## 개인정보
 

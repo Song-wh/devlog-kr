@@ -1,6 +1,7 @@
 // cpu-bench-runner: 측정 전용 프로세스 (CLI)
 //
 //   cpu-bench-runner info [--json]
+//   cpu-bench-runner check [--seconds N] [--json]   측정 전 환경 점검
 //   cpu-bench-runner run <module id | dll 경로> [--workload W] [--size N] [--threads N | --mt]
 //                        [--duration-ms N] [--runs N] [--seed N] [--no-pin] [--json]
 //   cpu-bench-runner sweep <module> [--workload W] [--from N] [--to N] [측정 옵션...]
@@ -8,6 +9,7 @@
 // 측정 절차: 프로세스 우선순위 HIGH → 워밍업 1회 → N회 측정 → 중앙값 채택, 변동계수(CV) 계산
 // sweep은 작업 데이터 크기를 from부터 2배씩 to까지 늘려 가며 크기마다 같은 절차를 반복한다.
 #include "bench_api.h"
+#include "envcheck.h"
 #include "smbios.h"
 #include "topology.h"
 
@@ -74,9 +76,62 @@ int usage() {
     std::fprintf(stderr,
                  "usage:\n"
                  "  cpu-bench-runner info [--json]\n"
-                 "  cpu-bench-runner run <module id | dll path> [--threads N | --mt] [--duration-ms N]\n"
-                 "                       [--runs N] [--seed N] [--no-pin] [--json]\n");
+                 "  cpu-bench-runner check [--seconds N] [--json]\n"
+                 "  cpu-bench-runner run <module id | dll path> [--workload W] [--size N] [--threads N | --mt]\n"
+                 "                       [--duration-ms N] [--runs N] [--seed N] [--no-pin] [--json]\n"
+                 "  cpu-bench-runner sweep <module id | dll path> [--workload W] [--from N] [--to N]\n"
+                 "                       [--threads N | --mt] [--duration-ms N] [--runs N] [--seed N] [--no-pin] [--json]\n"
+                 "sizes accept K/M/G suffixes (binary): 16K, 256M, 1G\n");
     return 2;
+}
+
+// ---------------------------------------------------------------- check
+
+int cmd_check(int argc, wchar_t** argv) {
+    double seconds = 3.0;
+    bool json = false;
+    for (int i = 2; i < argc; ++i) {
+        std::wstring a = argv[i];
+        if (a == L"--json") json = true;
+        else if (a == L"--seconds" && i + 1 < argc) {
+            wchar_t* end = nullptr;
+            seconds = std::wcstod(argv[++i], &end);
+            if (!end || *end || seconds < 0.5 || seconds > 60) return usage();
+        } else return usage();
+    }
+    if (!json) std::printf("Checking the environment (sampling idle CPU use for %.1f s)...\n", seconds);
+    const EnvReport r = check_environment(seconds, 5);
+    const auto warnings = evaluate(r);
+    if (json) {
+        std::printf("{\"power\":{\"known\":%s,\"on_ac\":%s,\"has_battery\":%s,\"battery_percent\":%d},"
+                    "\"power_plan\":{\"guid\":%s,\"name\":%s,\"kind\":%s,\"overlay\":%s,\"max_processor_state\":%d,"
+                    "\"min_processor_state\":%d},\"background\":{\"sample_seconds\":%.1f,\"busy_percent\":%.2f,\"process_percent\":%.2f,\"top\":[",
+                    r.power_known ? "true" : "false", r.on_ac ? "true" : "false", r.has_battery ? "true" : "false",
+                    r.battery_percent, json_str(r.scheme_guid).c_str(), json_str(r.scheme_name).c_str(),
+                    json_str(r.scheme_kind).c_str(), json_str(r.overlay).c_str(), r.max_processor_state,
+                    r.min_processor_state, r.sample_seconds, r.busy_percent, r.process_percent);
+        for (size_t i = 0; i < r.top.size(); ++i)
+            std::printf("%s{\"name\":%s,\"pid\":%u,\"cpu_percent\":%.2f}", i ? "," : "", json_str(r.top[i].name).c_str(),
+                        r.top[i].pid, r.top[i].cpu_percent);
+        std::printf("]},\"warnings\":[");
+        for (size_t i = 0; i < warnings.size(); ++i)
+            std::printf("%s{\"id\":%s,\"message\":%s}", i ? "," : "", json_str(warnings[i].id).c_str(),
+                        json_str(warnings[i].message).c_str());
+        std::printf("]}\n");
+        return 0;
+    }
+    if (r.power_known)
+        std::printf("Power    : %s%s\n", r.on_ac ? "AC" : "battery",
+                    r.has_battery ? (r.battery_percent >= 0 ? (", battery " + std::to_string(r.battery_percent) + "%").c_str() : ", battery") : "");
+    std::printf("Plan     : %s (%s)\n", r.scheme_kind.c_str(), r.scheme_guid.c_str());
+    std::printf("Mode     : %s\n", r.overlay.c_str());
+    if (r.max_processor_state >= 0)
+        std::printf("CPU state: min %d%%, max %d%% (%s)\n", r.min_processor_state, r.max_processor_state, r.on_ac ? "AC" : "battery");
+    std::printf("Idle CPU : %.1f%% busy over %.1f s (processes %.1f%%, rest is interrupts/DPC)\n", r.busy_percent, r.sample_seconds, r.process_percent);
+    for (const auto& p : r.top) std::printf("  %5.1f%%  %s (pid %u)\n", p.cpu_percent, p.name.c_str(), p.pid);
+    if (warnings.empty()) std::printf("Result   : ready to measure\n");
+    for (const auto& w : warnings) std::printf("Warning  : %s\n", w.message.c_str());
+    return 0;
 }
 
 // ---------------------------------------------------------------- info
@@ -589,5 +644,6 @@ int wmain(int argc, wchar_t** argv) {
     if (cmd == L"info") return cmd_info(argc > 2 && std::wstring(argv[2]) == L"--json");
     if (cmd == L"run") return cmd_run(argc, argv);
     if (cmd == L"sweep") return cmd_sweep(argc, argv);
+    if (cmd == L"check") return cmd_check(argc, argv);
     return usage();
 }
