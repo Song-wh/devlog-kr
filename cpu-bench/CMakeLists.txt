@@ -1,0 +1,37 @@
+cmake_minimum_required(VERSION 3.21)
+project(cpu_bench VERSION 0.1.0 LANGUAGES C CXX)
+
+if(NOT WIN32)
+  message(FATAL_ERROR "cpu-bench is Windows-only")
+endif()
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# 실행 파일과 모듈 DLL을 한 폴더에 모은다 (러너가 옆의 bench_<id>.dll을 찾음)
+foreach(cfg "" _DEBUG _RELEASE _RELWITHDEBINFO)
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY${cfg} ${CMAKE_BINARY_DIR}/bin)
+  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY${cfg} ${CMAKE_BINARY_DIR}/bin)
+endforeach()
+
+# 공통 컴파일 옵션
+add_library(bench_options INTERFACE)
+target_compile_definitions(bench_options INTERFACE UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
+if(MSVC)
+  target_compile_options(bench_options INTERFACE /W4 /permissive- /utf-8 /EHsc
+    $<$<CONFIG:Release,RelWithDebInfo>:/O2 /Oi /GS->)
+  # 정적 CRT: 배포 시 VC++ 재배포 패키지 설치가 필요 없게 한다
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
+add_library(bench_api INTERFACE)
+target_include_directories(bench_api INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+add_subdirectory(modules/int)
+add_subdirectory(runner)
+
+include(CTest)
+if(BUILD_TESTING)
+  add_subdirectory(tests)
+endif()
