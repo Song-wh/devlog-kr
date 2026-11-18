@@ -15,6 +15,7 @@
 #include "clock.h"
 #include "clockwatch.h"
 #include "envcheck.h"
+#include "netlink.h"
 #include "pcie.h"
 #include "ramspec.h"
 #include "score.h"
@@ -124,6 +125,8 @@ int cmd_check(int argc, wchar_t** argv) {
         for (auto& w : evaluate_memory(mem)) warnings.push_back(std::move(w));
     const auto pcie = query_pcie();
     for (auto& w : evaluate_pcie(pcie)) warnings.push_back(std::move(w));
+    const auto net = query_netlinks();
+    for (auto& w : evaluate_netlinks(net)) warnings.push_back(std::move(w));
     if (json) {
         std::printf("{\"power\":{\"known\":%s,\"on_ac\":%s,\"has_battery\":%s,\"battery_percent\":%d},"
                     "\"power_plan\":{\"guid\":%s,\"name\":%s,\"kind\":%s,\"overlay\":%s,\"max_processor_state\":%d,"
@@ -140,6 +143,11 @@ int cmd_check(int argc, wchar_t** argv) {
             std::printf("%s{\"kind\":%s,\"name\":%s,\"cur_gen\":%u,\"max_gen\":%u,\"cur_width\":%u,\"max_width\":%u}", i ? "," : "",
                         json_str(pcie[i].kind).c_str(), json_str(pcie[i].name).c_str(), pcie[i].cur_gen, pcie[i].max_gen,
                         pcie[i].cur_width, pcie[i].max_width);
+        std::printf("],\"network\":[");
+        for (size_t i = 0; i < net.size(); ++i)
+            std::printf("%s{\"kind\":%s,\"name\":%s,\"rx_bps\":%llu,\"tx_bps\":%llu}", i ? "," : "", json_str(net[i].kind).c_str(),
+                        json_str(net[i].name).c_str(), static_cast<unsigned long long>(net[i].rx_bps),
+                        static_cast<unsigned long long>(net[i].tx_bps));
         std::printf("],\"warnings\":[");
         for (size_t i = 0; i < warnings.size(); ++i)
             std::printf("%s{\"id\":%s,\"message\":%s}", i ? "," : "", json_str(warnings[i].id).c_str(),
@@ -168,6 +176,8 @@ int cmd_check(int argc, wchar_t** argv) {
     }
     for (const auto& d : pcie)
         std::printf("PCIe     : %-4s gen %u/%u, x%u/x%u  %s\n", d.kind.c_str(), d.cur_gen, d.max_gen, d.cur_width, d.max_width, d.name.c_str());
+    for (const auto& l : net)
+        std::printf("Network  : %-8s %.0f Mbps  %s\n", l.kind.c_str(), double(std::max(l.rx_bps, l.tx_bps)) / 1e6, l.name.c_str());
     if (warnings.empty()) std::printf("Result   : ready to measure\n");
     for (const auto& w : warnings) std::printf("Warning  : %s\n", w.message.c_str());
     return 0;

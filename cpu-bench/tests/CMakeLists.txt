@@ -49,3 +49,9 @@ add_executable(pcie_test pcie_test.cpp ${CMAKE_SOURCE_DIR}/runner/pcie.cpp)
 target_include_directories(pcie_test PRIVATE ${CMAKE_SOURCE_DIR}/runner)
 target_link_libraries(pcie_test PRIVATE bench_options setupapi)
 add_test(NAME pcie COMMAND pcie_test)
+
+# 네트워크 연결 판정
+add_executable(netlink_test netlink_test.cpp ${CMAKE_SOURCE_DIR}/runner/netlink.cpp)
+target_include_directories(netlink_test PRIVATE ${CMAKE_SOURCE_DIR}/runner)
+target_link_libraries(netlink_test PRIVATE bench_options iphlpapi)
+add_test(NAME netlink COMMAND netlink_test)
