@@ -128,6 +128,10 @@ public partial class MainWindow : Window
     private async void FullButton_Click(object sender, RoutedEventArgs e)
     {
         if (_runner is null) return;
+        var ok = MessageBox.Show(this,
+            "약 2분 30초 걸립니다.\n\n1. 환경 점검 (3초)\n2. 점수 측정 (1분 남짓)\n3. 발열 검사 (1분): 모든 코어에 부하를 걸어서 팬 소리가 커지고 PC가 따뜻해질 수 있습니다.\n\n정확한 결과를 위해 그동안 다른 프로그램은 잠시 쉬게 해 주세요.",
+            "전체 점검", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+        if (ok != MessageBoxResult.OK) return;
         if (!await RunCheckAsync("1/3 ")) return;
         if (!await RunScoreAsync("2/3 ")) return;
         if (!await RunThrottleAsync("3/3 ")) return;
