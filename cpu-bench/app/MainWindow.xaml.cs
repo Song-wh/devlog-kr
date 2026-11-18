@@ -11,6 +11,8 @@ public partial class MainWindow : Window
     private readonly Runner? _runner = Runner.FindNextToApp();
     private readonly List<FindingRow> _findings = new();
     private readonly ResultStore _store = new();
+    private readonly AppSettings _settings = AppSettings.Load();
+    private string? _updateUrl;
 
     // 점수 항목 키 → 화면 이름
     private static readonly Dictionary<string, string> ItemNames = new()
@@ -25,11 +27,37 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        VersionRun.Text = $"  v{UpdateCheck.Current}";
+        UpdateCheckBox.IsChecked = _settings.CheckUpdates;
         Loaded += async (_, _) =>
         {
             ShowHistory();
             await LoadInfoAsync();
+            if (_settings.CheckUpdates) await CheckUpdateAsync();
         };
+    }
+
+    private async Task CheckUpdateAsync()
+    {
+        var r = await UpdateCheck.CheckAsync(UpdateCheck.Current, TimeSpan.FromSeconds(5));
+        if (r is null) return;
+        _updateUrl = r.Url;
+        UpdateText.Text = $"새 버전 v{r.Version}이(가) 나왔습니다. 지금 버전은 v{UpdateCheck.Current}입니다.";
+        UpdateBanner.Visibility = Visibility.Visible;
+    }
+
+    private void Update_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updateUrl != null) Process.Start(new ProcessStartInfo(_updateUrl) { UseShellExecute = true });
+    }
+
+    private void UpdateCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        bool on = UpdateCheckBox.IsChecked == true;
+        if (on == _settings.CheckUpdates) return;
+        _settings.CheckUpdates = on;
+        _settings.Save();
+        if (!on) UpdateBanner.Visibility = Visibility.Collapsed;
     }
 
     private async Task LoadInfoAsync()

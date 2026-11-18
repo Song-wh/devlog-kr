@@ -6,10 +6,22 @@
     <DockPanel Margin="24">
         <!-- 머리말 -->
         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,16">
-            <TextBlock FontSize="28" FontWeight="Bold"><Run Text="cpu-bench" Foreground="{StaticResource Accent}" /><Run Text="  내 PC가 제 성능을 내는지 알려 주는 벤치마크" FontSize="16" Foreground="{StaticResource Muted}" FontWeight="Normal" /></TextBlock>
+            <TextBlock FontSize="28" FontWeight="Bold"><Run Text="cpu-bench" Foreground="{StaticResource Accent}" /><Run x:Name="VersionRun" Text="" FontSize="14" Foreground="{StaticResource Muted}" FontWeight="Normal" /><Run Text="  내 PC가 제 성능을 내는지 알려 주는 벤치마크" FontSize="16" Foreground="{StaticResource Muted}" FontWeight="Normal" /></TextBlock>
+            <!-- 새 버전 알림 (있을 때만 보임) -->
+            <Border x:Name="UpdateBanner" Visibility="Collapsed" Margin="0,10,0,0" Padding="14,8" CornerRadius="8"
+                    Background="{StaticResource Panel}" BorderBrush="{StaticResource Accent}" BorderThickness="1">
+                <TextBlock FontSize="14">
+                    <Run x:Name="UpdateText" Text="" /><Run Text="  " /><Hyperlink Click="Update_Click" Foreground="{StaticResource Accent}">받으러 가기</Hyperlink>
+                </TextBlock>
+            </Border>
             <TextBlock x:Name="CpuText" Margin="0,8,0,0" FontSize="16" Text="PC 정보를 읽는 중…" />
             <TextBlock x:Name="MemText" Foreground="{StaticResource Muted}" />
         </StackPanel>
+
+        <!-- 아래쪽: 새 버전 확인 설정 -->
+        <CheckBox x:Name="UpdateCheckBox" DockPanel.Dock="Bottom" Margin="0,12,0,0" Foreground="{StaticResource Muted}" FontSize="13"
+                  Checked="UpdateCheckBox_Changed" Unchecked="UpdateCheckBox_Changed"
+                  Content="시작할 때 새 버전 확인 (GitHub에 최신 버전 번호만 물어봅니다. 측정 결과나 PC 정보는 보내지 않습니다)" />
 
         <!-- 버튼과 진행 상태 -->
         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,16">
@@ -123,7 +135,7 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <TextBlock Margin="0,12,0,0" FontSize="13" Foreground="{StaticResource Muted}"
-                                   Text="진단은 읽기만 합니다. 설정을 바꾸거나 프로그램을 종료하지 않고, 결과는 어디에도 보내지 않습니다." />
+                                   Text="진단은 읽기만 합니다. 설정을 바꾸거나 프로그램을 종료하지 않고, 측정 결과는 어디에도 보내지 않습니다." />
                     </StackPanel>
                 </Border>
             </ScrollViewer>
