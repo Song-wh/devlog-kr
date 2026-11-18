@@ -31,6 +31,8 @@ public static partial class Diagnosis
             list.Add(new Finding(true, "메모리 구성 정상", "채널 구성과 동작 속도에 문제가 보이지 않습니다."));
         if (check.TryGetProperty("pcie", out var pcie) && pcie.GetArrayLength() > 0 && !ids.Contains("pcie_width") && !ids.Contains("pcie_gen"))
             list.Add(new Finding(true, "장치 연결 정상", string.Join(", ", pcie.EnumerateArray().Select(PcieText)) + "."));
+        if (check.TryGetProperty("network", out var net) && net.GetArrayLength() > 0 && !ids.Contains("net_slow_ethernet") && !ids.Contains("net_slow_wifi"))
+            list.Add(new Finding(true, "네트워크 연결 정상", string.Join(", ", net.EnumerateArray().Select(NetText)) + ". (인터넷 속도가 아니라 이 PC와 공유기 사이 연결 속도입니다)"));
         return list.OrderBy(f => f.Ok).ToList();
     }
 
@@ -80,6 +82,12 @@ public static partial class Diagnosis
             case "pcie_gen":
                 return new(false, "NVMe SSD가 지원하는 세대보다 낮은 속도로 연결됨",
                     "SSD는 더 빠른 PCIe 세대를 지원하지만 슬롯이 구세대이거나 칩셋을 거치는 슬롯일 수 있습니다. 메인보드 설명서에서 CPU에 연결된 M.2 슬롯을 확인해 보세요. " + message);
+            case "net_slow_ethernet":
+                return new(false, "유선 랜이 100Mbps 이하로 연결됨",
+                    "요즘 랜카드는 대부분 1Gbps 이상을 지원합니다. 랜선(Cat5e 이상인지, 끊어진 곳은 없는지)과 공유기 포트를 바꿔 보세요. 인터넷이 그보다 빠른 요금제라면 속도가 여기서 막힙니다. " + message);
+            case "net_slow_wifi":
+                return new(false, "Wi-Fi 연결 속도가 느림",
+                    "신호가 약하거나 오래된 규격으로 연결돼 있습니다. 공유기 가까이에서, 가능하면 5GHz 대역으로 연결해 보세요. " + message);
             default:
                 return new(false, id, message);
         }
@@ -93,6 +101,14 @@ public static partial class Diagnosis
 
     [GeneratedRegex(@"^(Graphics card|NVMe SSD) (.+) runs at x(\d+) but supports x(\d+)$")]
     private static partial Regex PcieWidthRegex();
+
+    /// <summary>"유선 1 Gbps" 같은 한 줄</summary>
+    public static string NetText(JsonElement l)
+    {
+        double bps = Math.Max(l.GetProperty("rx_bps").GetDouble(), l.GetProperty("tx_bps").GetDouble());
+        string speed = bps >= 1e9 ? $"{bps / 1e9:0.#} Gbps" : $"{bps / 1e6:0} Mbps";
+        return $"{(l.GetProperty("kind").GetString() == "wifi" ? "Wi-Fi" : "유선")} {speed}";
+    }
 
     /// <summary>"RTX 5060 PCIe 5.0 x8" 같은 한 줄</summary>
     public static string PcieText(JsonElement d)

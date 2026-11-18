@@ -144,12 +144,16 @@ public static class Summary
     private static SummaryCard Devices(JsonElement? check, HashSet<string> warnIds)
     {
         const string title = "장치 연결";
-        if (check is not JsonElement c) return new("none", title, "아직 안 잼", "그래픽카드·SSD가 제 속도의 슬롯에 연결됐는지 봅니다.");
+        if (check is not JsonElement c) return new("none", title, "아직 안 잼", "그래픽카드·SSD·랜이 제 속도로 연결됐는지 봅니다.");
         var list = c.TryGetProperty("pcie", out var p) ? p.EnumerateArray().ToList() : new();
         if (warnIds.Contains("pcie_width")) return new("warn", title, "레인 수 부족", "그래픽카드나 SSD가 지원하는 것보다 좁게 연결돼 있습니다. 아래 진단을 확인하세요.");
         if (warnIds.Contains("pcie_gen")) return new("warn", title, "SSD 속도 제한", "SSD가 지원하는 것보다 낮은 PCIe 세대로 연결돼 있습니다.");
-        if (list.Count == 0) return new("ok", title, "확인할 장치 없음", "PCIe 그래픽카드·NVMe SSD를 찾지 못했습니다(내장 그래픽·SATA SSD는 해당 없음).");
-        return new("ok", title, "정상", string.Join(", ", list.Select(Diagnosis.PcieText)) + ".");
+        if (warnIds.Contains("net_slow_ethernet")) return new("warn", title, "랜 100Mbps 이하", "유선 랜이 느리게 연결돼 있습니다. 랜선과 공유기 포트를 확인하세요.");
+        if (warnIds.Contains("net_slow_wifi")) return new("warn", title, "Wi-Fi 느림", "Wi-Fi 연결 속도가 느립니다. 공유기 가까이, 5GHz로 연결해 보세요.");
+        var net = c.TryGetProperty("network", out var n) ? n.EnumerateArray().Select(Diagnosis.NetText).ToList() : new();
+        var parts = list.Select(Diagnosis.PcieText).Concat(net).ToList();
+        if (parts.Count == 0) return new("ok", title, "확인할 장치 없음", "PCIe 그래픽카드·NVMe SSD·네트워크 어댑터를 찾지 못했습니다.");
+        return new("ok", title, "정상", string.Join(", ", parts) + ".");
     }
 
     /// <summary>
