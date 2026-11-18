@@ -82,7 +82,9 @@ const char* status_name(int32_t rc) {
 
 int usage() {
     std::fprintf(stderr,
+                 "cpu-bench-runner " CPU_BENCH_VERSION "\n"
                  "usage:\n"
+                 "  cpu-bench-runner version\n"
                  "  cpu-bench-runner info [--json]\n"
                  "  cpu-bench-runner check [--seconds N] [--json]\n"
                  "  cpu-bench-runner clock [--json]\n"
@@ -300,8 +302,8 @@ int cmd_info(bool json) {
     std::string mem_err;
     const bool mem_ok = query_memory(mem, mem_err);
     if (json) {
-        std::printf("{\"cpu\":%s,\"logical\":%zu,\"cores\":%u,\"groups\":%u,\"hybrid\":%s,\"perf_cores\":%u,\"caches\":[",
-                    json_str(topo.brand).c_str(), topo.cpus.size(), topo.cores, topo.groups,
+        std::printf("{\"version\":\"%s\",\"cpu\":%s,\"logical\":%zu,\"cores\":%u,\"groups\":%u,\"hybrid\":%s,\"perf_cores\":%u,\"caches\":[",
+                    CPU_BENCH_VERSION, json_str(topo.brand).c_str(), topo.cpus.size(), topo.cores, topo.groups,
                     topo.hybrid ? "true" : "false", topo.perf_cores);
         for (size_t i = 0; i < topo.caches.size(); ++i) {
             const auto& c = topo.caches[i];
@@ -328,6 +330,7 @@ int cmd_info(bool json) {
         std::printf("}\n");
         return 0;
     }
+    std::printf("Version  : %s\n", CPU_BENCH_VERSION);
     std::printf("CPU      : %s\n", topo.brand.c_str());
     std::printf("Logical  : %zu  (cores %u, groups %u)\n", topo.cpus.size(), topo.cores, topo.groups);
     if (topo.hybrid)
@@ -959,6 +962,10 @@ int cmd_score(int argc, wchar_t** argv) {
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2) return usage();
     std::wstring cmd = argv[1];
+    if (cmd == L"version" || cmd == L"--version") {
+        std::printf("%s\n", CPU_BENCH_VERSION);
+        return 0;
+    }
     if (cmd == L"info") return cmd_info(argc > 2 && std::wstring(argv[2]) == L"--json");
     if (cmd == L"run") return cmd_run(argc, argv);
     if (cmd == L"sweep") return cmd_sweep(argc, argv);

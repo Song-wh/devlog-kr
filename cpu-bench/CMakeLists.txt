@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
-project(cpu_bench VERSION 0.1.0 LANGUAGES C CXX)
+
+# 버전은 VERSION 파일 하나에서 읽는다 (러너·앱·배포 zip이 같은 값을 쓴다)
+file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/VERSION CPU_BENCH_VERSION LIMIT_COUNT 1)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/VERSION)
+project(cpu_bench VERSION ${CPU_BENCH_VERSION} LANGUAGES C CXX)
 
 if(NOT WIN32)
   message(FATAL_ERROR "cpu-bench is Windows-only")

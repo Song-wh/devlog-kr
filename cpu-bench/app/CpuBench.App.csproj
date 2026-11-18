@@ -10,7 +10,8 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AssemblyName>cpu-bench</AssemblyName>
     <RootNamespace>CpuBench.App</RootNamespace>
-    <Version>0.1.0</Version>
+    <!-- 버전은 ../VERSION 하나에서 읽는다 (러너·배포 zip과 같은 값) -->
+    <Version>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\VERSION').Trim())</Version>
   </PropertyGroup>
 
   <!-- 개발 중: C++ 빌드 결과(러너와 모듈 DLL)를 앱 출력 폴더로 복사. 없으면 건너뜀 -->
