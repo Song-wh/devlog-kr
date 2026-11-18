@@ -13,6 +13,7 @@
 // sweep은 작업 데이터 크기를 from부터 2배씩 to까지 늘려 가며 크기마다 같은 절차를 반복한다.
 #include "bench_api.h"
 #include "clock.h"
+#include "clockwatch.h"
 #include "envcheck.h"
 #include "pcie.h"
 #include "ramspec.h"
@@ -590,6 +591,9 @@ struct Measurement {
     std::vector<double> values;  // 표시 단위 값
     std::vector<double> others;  // 회차마다 다른 프로그램이 쓴 CPU %
     std::vector<double> clocks;  // 싱글 측정: 회차 직후 그 코어의 유효 클럭(GHz), 멀티는 0
+    std::vector<double> clocks_during;  // 싱글 측정: 회차 도중 그 코어의 평균 유효 클럭(성능 카운터, GHz), 못 재면 0
+    std::vector<std::string> tops;      // 회차마다 CPU를 많이 쓴 다른 프로그램 상위 3개 ("name 1.2%, ...")
+    std::vector<std::pair<double, std::string>> rejected;  // 방해로 버린 회차: (다른 프로그램 %, 상위 3개)
     Display display;
     double median = 0, cv = 0;
     uint64_t mismatches = 0;
@@ -612,12 +616,32 @@ int32_t measure(const Module& mod, const BenchConfig& cfg, uint32_t runs, Measur
     int32_t rc = mod.init(&cfg, &ctx);
     if (rc != BENCH_OK) return rc;
     int32_t worst = BENCH_OK;
+    // 싱글 측정: 이 스레드가 0번 워커이고 성능 코어에 고정돼 있다 → 이 코어의 클럭을 회차 도중 내내 본다
+    ClockWatch watch;
+    if (cfg.threads == 1) {
+        PROCESSOR_NUMBER pn{};
+        GetCurrentProcessorNumberEx(&pn);
+        watch.open(pn.Group, pn.Number);
+    }
+    auto top_text = [](const ProcessSnapshot& a, const ProcessSnapshot& b) {
+        std::string t;
+        char buf[160];
+        for (const auto& p : top_between(a, b, 3)) {
+            std::snprintf(buf, sizeof(buf), "%s%s %.1f%%", t.empty() ? "" : ", ", p.name.c_str(), p.cpu_percent);
+            t += buf;
+        }
+        return t;
+    };
     for (uint32_t r = 0; r <= runs; ++r) {  // r == 0은 워밍업
         BenchResult res{};
         res.struct_size = sizeof(res);
+        const ProcessSnapshot snap_a = take_process_snapshot();
         const CpuSample before = sample_cpu();
+        watch.begin();
         rc = mod.run(ctx, &res, nullptr, nullptr, nullptr);
+        const double clock_during = cfg.threads == 1 ? watch.end_ghz() : 0.0;
         const double others = other_cpu_percent(before, sample_cpu());
+        const ProcessSnapshot snap_b = take_process_snapshot();
         // 싱글 측정은 이 스레드(성능 코어에 고정됨)가 0번 워커라, 끝나자마자 같은 코어의 클럭을 잴 수 있다.
         // 코어가 아직 바쁜 상태라 워밍업 없이 짧게 여러 번 재서 가장 높은 값을 쓴다.
         double clock_ghz = 0;
@@ -630,6 +654,7 @@ int32_t measure(const Module& mod, const BenchConfig& cfg, uint32_t runs, Measur
         if (rc == BENCH_E_CHECKSUM) worst = rc;
         if (r == 0) continue;
         if (policy.max_others_percent >= 0 && others > policy.max_others_percent && m.retries < policy.max_retries) {
+            m.rejected.push_back({others, top_text(snap_a, snap_b)});
             ++m.retries;  // 이 회차는 버리고 같은 번호로 다시
             --r;
             continue;
@@ -640,6 +665,8 @@ int32_t measure(const Module& mod, const BenchConfig& cfg, uint32_t runs, Measur
         m.values.push_back(display_value(res, m.display));
         m.others.push_back(others);
         m.clocks.push_back(clock_ghz);
+        m.clocks_during.push_back(clock_during);
+        m.tops.push_back(top_text(snap_a, snap_b));
         on_run(r, res, m.values.back());
     }
     mod.shutdown(ctx);
@@ -769,9 +796,11 @@ int cmd_run(int argc, wchar_t** argv) {
             const BenchResult& r = m.results[i];
             ops.push_back(r.ops_per_sec);
             std::printf("%s{\"ops_per_sec\":%.3f,\"value\":%.4f,\"iterations\":%llu,\"elapsed_s\":%.6f,"
-                        "\"mismatches\":%llu,\"others_cpu_percent\":%.2f,\"clock_ghz\":%.3f}",
+                        "\"mismatches\":%llu,\"others_cpu_percent\":%.2f,\"clock_ghz\":%.3f,\"clock_during_ghz\":%.3f,"
+                        "\"others_top\":%s}",
                         i ? "," : "", r.ops_per_sec, m.values[i], static_cast<unsigned long long>(r.iterations),
-                        r.elapsed_s, static_cast<unsigned long long>(r.mismatches), m.others[i], m.clocks[i]);
+                        r.elapsed_s, static_cast<unsigned long long>(r.mismatches), m.others[i], m.clocks[i],
+                        m.clocks_during[i], json_str(m.tops[i]).c_str());
         }
         std::printf("],\"median_ops_per_sec\":%.3f,\"median_value\":%.4f,\"cv_percent\":%.3f,"
                     "\"checksum\":\"0x%016llx\",\"checksum_ok\":%s}\n",
@@ -893,6 +922,7 @@ int cmd_score(int argc, wchar_t** argv) {
     struct Row {
         const ScoreItem* item; double value; double ratio; std::string unit; uint64_t checksum; bool ok;
         uint32_t retries; double others_max;
+        Measurement m;  // 회차별 기록(값, 다른 프로그램, 도중 클럭, 버린 회차) → JSON
     };
     std::vector<Row> rows;
     std::string cpu;
@@ -926,7 +956,7 @@ int cmd_score(int argc, wchar_t** argv) {
             return 1;
         }
         const double ratio = score_ratio(it, m.median);
-        rows.push_back({&it, m.median, ratio, m.display.unit, m.results.front().checksum, m.ok, m.retries, m.others_max});
+        rows.push_back({&it, m.median, ratio, m.display.unit, m.results.front().checksum, m.ok, m.retries, m.others_max, m});
         all_ok = all_ok && m.ok;
         if (!json) {
             std::printf("%10.2f %-6s (reference %g, x%.3f)%s", m.median, m.display.unit.c_str(), it.reference, ratio,
@@ -947,12 +977,22 @@ int cmd_score(int argc, wchar_t** argv) {
                     "\"max_others_percent\":%g,\"items\":[",
                     kScoreVersion, json_str(cpu).c_str(), st_score, mt_score, all_ok ? "true" : "false",
                     disturbed ? "true" : "false", kScoreMaxOthersPercent);
-        for (size_t i = 0; i < rows.size(); ++i)
+        for (size_t i = 0; i < rows.size(); ++i) {
             std::printf("%s{\"key\":%s,\"value\":%.4f,\"unit\":%s,\"reference\":%g,\"ratio\":%.4f,\"checksum\":\"0x%016llx\","
-                        "\"checksum_ok\":%s,\"retries\":%u,\"others_max_percent\":%.2f}",
+                        "\"checksum_ok\":%s,\"retries\":%u,\"others_max_percent\":%.2f,\"runs\":[",
                         i ? "," : "", json_str(rows[i].item->key).c_str(), rows[i].value, json_str(rows[i].unit).c_str(),
                         rows[i].item->reference, rows[i].ratio, static_cast<unsigned long long>(rows[i].checksum),
                         rows[i].ok ? "true" : "false", rows[i].retries, rows[i].others_max);
+            const Measurement& m = rows[i].m;
+            for (size_t k = 0; k < m.values.size(); ++k)
+                std::printf("%s{\"value\":%.4f,\"others_cpu_percent\":%.2f,\"clock_ghz\":%.3f,\"clock_during_ghz\":%.3f,\"others_top\":%s}",
+                            k ? "," : "", m.values[k], m.others[k], m.clocks[k], m.clocks_during[k], json_str(m.tops[k]).c_str());
+            std::printf("],\"rejected\":[");
+            for (size_t k = 0; k < m.rejected.size(); ++k)
+                std::printf("%s{\"others_cpu_percent\":%.2f,\"others_top\":%s}", k ? "," : "", m.rejected[k].first,
+                            json_str(m.rejected[k].second).c_str());
+            std::printf("]}");
+        }
         std::printf("]}\n");
         return all_ok ? 0 : 3;
     }

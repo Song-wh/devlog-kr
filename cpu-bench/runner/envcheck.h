@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -45,3 +46,12 @@ std::vector<EnvWarning> evaluate(const EnvReport& r);
 
 // 메모리 진단: 싱글 채널, 같은 채널에 몰린 모듈, 정격(파트 번호)보다 낮은 설정 속도(XMP/EXPO 꺼짐 의심)
 std::vector<EnvWarning> evaluate_memory(const MemoryInfo& m);
+
+// 측정 한 회차 동안 다른 프로그램이 CPU를 얼마나 썼는지 프로세스별로 보기 위한 스냅샷.
+// take_process_snapshot()을 회차 앞뒤로 부르고 top_between()으로 상위 n개를 얻는다(이 프로세스는 제외).
+struct ProcessSnapshot {
+    std::map<uint32_t, std::pair<std::string, uint64_t>> procs;  // pid -> (이름, CPU 시간 100ns)
+    uint64_t total = 0;  // 시스템 전체 CPU 시간(모든 논리 코어, kernel+user), 100ns
+};
+ProcessSnapshot take_process_snapshot();
+std::vector<ProcessLoad> top_between(const ProcessSnapshot& a, const ProcessSnapshot& b, size_t top_n);

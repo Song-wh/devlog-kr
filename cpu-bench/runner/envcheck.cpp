@@ -234,3 +234,27 @@ std::vector<EnvWarning> evaluate_memory(const MemoryInfo& m) {
     }
     return w;
 }
+
+ProcessSnapshot take_process_snapshot() {
+    ProcessSnapshot s;
+    FILETIME i, k, u;
+    if (GetSystemTimes(&i, &k, &u)) s.total = ft64(k) + ft64(u);
+    for (auto& [pid, p] : snapshot_processes()) s.procs[pid] = {std::move(p.name), p.cpu};
+    return s;
+}
+
+std::vector<ProcessLoad> top_between(const ProcessSnapshot& a, const ProcessSnapshot& b, size_t top_n) {
+    std::vector<ProcessLoad> top;
+    const uint64_t total = b.total - a.total;
+    if (total == 0) return top;
+    const uint32_t self = GetCurrentProcessId();
+    for (const auto& [pid, p] : b.procs) {
+        auto it = a.procs.find(pid);
+        if (it == a.procs.end() || pid == self || p.second < it->second.second) continue;
+        const double pct = 100.0 * double(p.second - it->second.second) / double(total);
+        if (pct >= 0.05) top.push_back({p.first, pid, pct});
+    }
+    std::sort(top.begin(), top.end(), [](const ProcessLoad& x, const ProcessLoad& y) { return x.cpu_percent > y.cpu_percent; });
+    if (top.size() > top_n) top.resize(top_n);
+    return top;
+}
