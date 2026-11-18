@@ -25,6 +25,22 @@ public sealed class ResultStore
         return path;
     }
 
+    /// <summary>가장 최근에 저장한 kind 결과(없거나 읽지 못하면 null). 앱을 다시 켜도 요약을 보여 주려고 쓴다.</summary>
+    public JsonElement? LoadLatest(string kind)
+    {
+        if (!Directory.Exists(Folder)) return null;
+        foreach (var f in Directory.GetFiles(Folder, $"*-{kind}.json").OrderByDescending(f => f).Take(3))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(f));
+                return doc.RootElement.Clone();
+            }
+            catch (Exception e) when (e is IOException or JsonException) { }
+        }
+        return null;
+    }
+
     public sealed record ScoreEntry(DateTime When, int Version, double Single, double Multi, bool Valid);
 
     /// <summary>저장된 점수 기록, 최신순. 읽을 수 없는 파일은 건너뛴다.</summary>

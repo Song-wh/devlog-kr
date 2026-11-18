@@ -13,6 +13,8 @@ public partial class MainWindow : Window
     private readonly ResultStore _store = new();
     private readonly AppSettings _settings = AppSettings.Load();
     private string? _updateUrl;
+    // 요약에 쓰는 가장 최근 결과 (앱을 다시 켜면 저장된 결과에서 읽음)
+    private JsonElement? _info, _check, _score, _throttle;
 
     // 점수 항목 키 → 화면 이름
     private static readonly Dictionary<string, string> ItemNames = new()
@@ -32,7 +34,15 @@ public partial class MainWindow : Window
         Loaded += async (_, _) =>
         {
             ShowHistory();
+            _check = _store.LoadLatest("check");
+            _score = _store.LoadLatest("score");
+            _throttle = _store.LoadLatest("throttle");
+            if (_check is JsonElement c) ShowFindings(Diagnosis.FromCheck(c), f => !f.Title.Contains("쓰로틀링"));
+            if (_throttle is JsonElement t) ShowFindings(new[] { Diagnosis.FromThrottle(t) }, f => f.Title.Contains("쓰로틀링"));
+            if (_score is JsonElement sc) ShowScore(sc);
+            RefreshSummary();
             await LoadInfoAsync();
+            RefreshSummary();
             if (_settings.CheckUpdates) await CheckUpdateAsync();
         };
     }
@@ -65,7 +75,7 @@ public partial class MainWindow : Window
         if (_runner is null)
         {
             CpuText.Text = "cpu-bench-runner.exe를 찾지 못했습니다. 앱과 같은 폴더에 있어야 합니다.";
-            CheckButton.IsEnabled = ScoreButton.IsEnabled = ThrottleButton.IsEnabled = false;
+            FullButton.IsEnabled = CheckButton.IsEnabled = ScoreButton.IsEnabled = ThrottleButton.IsEnabled = false;
             return;
         }
         var r = await _runner.RunAsync("info --json");
@@ -75,6 +85,7 @@ public partial class MainWindow : Window
             return;
         }
         var j = r.Json.RootElement;
+        _info = j.Clone();
         CpuText.Text = $"{j.GetProperty("cpu").GetString()}  ·  논리 코어 {j.GetProperty("logical").GetInt32()}개" +
                        (j.GetProperty("hybrid").GetBoolean() ? $" (성능 코어 {j.GetProperty("perf_cores").GetInt32()}개 포함)" : "");
         if (j.TryGetProperty("memory", out var mem))
@@ -89,7 +100,7 @@ public partial class MainWindow : Window
 
     private void SetBusy(bool busy, string status)
     {
-        CheckButton.IsEnabled = ScoreButton.IsEnabled = ThrottleButton.IsEnabled = !busy;
+        FullButton.IsEnabled = CheckButton.IsEnabled = ScoreButton.IsEnabled = ThrottleButton.IsEnabled = !busy;
         Progress.Visibility = busy ? Visibility.Visible : Visibility.Hidden;
         Progress.IsIndeterminate = busy;
         StatusText.Text = status;
@@ -104,25 +115,51 @@ public partial class MainWindow : Window
         DiagHint.Visibility = _findings.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    private async void CheckButton_Click(object sender, RoutedEventArgs e)
+    private void RefreshSummary()
+    {
+        var (state, verdict, cards) = Summary.Build(_info, _check, _score, _throttle);
+        var brush = (string st) => (Brush)Application.Current.Resources[st == "ok" ? "Good" : st == "warn" ? "Accent" : "Muted"];
+        VerdictIcon.Text = state == "ok" ? "✔" : state == "warn" ? "⚠" : "•";
+        VerdictIcon.Foreground = brush(state);
+        VerdictText.Text = verdict;
+        SummaryCards.ItemsSource = cards.Select(c => new { c.Title, c.Value, c.Detail, Brush = brush(c.State) }).ToList();
+    }
+
+    private async void FullButton_Click(object sender, RoutedEventArgs e)
     {
         if (_runner is null) return;
-        SetBusy(true, "환경 점검 중… (3초 동안 쉬고 있을 때의 CPU 사용률을 잽니다)");
+        if (!await RunCheckAsync("1/3 ")) return;
+        if (!await RunScoreAsync("2/3 ")) return;
+        if (!await RunThrottleAsync("3/3 ")) return;
+        StatusText.Text = "전체 점검 완료";
+    }
+
+    private async void CheckButton_Click(object sender, RoutedEventArgs e) => await RunCheckAsync("");
+    private async void ScoreButton_Click(object sender, RoutedEventArgs e) => await RunScoreAsync("");
+    private async void ThrottleButton_Click(object sender, RoutedEventArgs e) => await RunThrottleAsync("");
+
+    private async Task<bool> RunCheckAsync(string step)
+    {
+        if (_runner is null) return false;
+        SetBusy(true, $"{step}환경 점검 중… (3초 동안 쉬고 있을 때의 CPU 사용률을 잽니다)");
         // 점검은 '쉬고 있을 때' 사용률을 재므로, 이 앱도 그동안 아무것도 그리지 않는다.
         // 진행 막대 애니메이션을 켜 두면 앱 자신이 백그라운드 사용률 목록에 올라왔다(버그 005).
         Progress.Visibility = Visibility.Hidden;
         Progress.IsIndeterminate = false;
         var r = await _runner.RunAsync("check --json");
-        SetBusy(false, r.Json is null ? $"환경 점검 실패: {r.StdErr.Trim()}" : "환경 점검 완료");
-        if (r.Json is null) return;
+        SetBusy(false, r.Json is null ? $"환경 점검 실패: {r.StdErr.Trim()}" : $"{step}환경 점검 완료");
+        if (r.Json is null) return false;
         _store.Save("check", r.Json.RootElement);
+        _check = r.Json.RootElement.Clone();
         ShowFindings(Diagnosis.FromCheck(r.Json.RootElement), f => !f.Title.Contains("쓰로틀링"));
+        RefreshSummary();
+        return true;
     }
 
-    private async void ScoreButton_Click(object sender, RoutedEventArgs e)
+    private async Task<bool> RunScoreAsync(string step)
     {
-        if (_runner is null) return;
-        SetBusy(true, "점수 측정 중…");
+        if (_runner is null) return false;
+        SetBusy(true, $"{step}점수 측정 중…");
         Progress.IsIndeterminate = false;
         Progress.Value = 0;
         var r = await _runner.RunAsync("score --json --progress", p => Dispatcher.Invoke(() =>
@@ -130,19 +167,33 @@ public partial class MainWindow : Window
             int k = p.GetProperty("progress").GetInt32(), n = p.GetProperty("total").GetInt32();
             string key = p.GetProperty("item").GetString() ?? "";
             Progress.Value = (double)k / n;
-            StatusText.Text = $"점수 측정 중… {k + 1}/{n} {ItemNames.GetValueOrDefault(key, key)}";
+            StatusText.Text = $"{step}점수 측정 중… {k + 1}/{n} {ItemNames.GetValueOrDefault(key, key)}";
         }));
         if (r.Json is null)
         {
             SetBusy(false, $"점수 측정 실패: {r.StdErr.Trim()}");
-            return;
+            return false;
         }
         var j = r.Json.RootElement;
         _store.Save("score", j);
+        _score = j.Clone();
         ShowHistory();
+        string note = ShowScore(j);
         bool valid = j.GetProperty("valid").GetBoolean();
-        SingleText.Text = valid ? j.GetProperty("single").GetDouble().ToString("0") : "무효";
-        MultiText.Text = valid ? j.GetProperty("multi").GetDouble().ToString("0") : "무효";
+        SetBusy(false, valid ? $"{step}점수 측정 완료 (점수 체계 v{j.GetProperty("score_version").GetInt32()}){note}"
+                             : "계산 결과가 기대값과 달라서 점수를 내지 않았습니다. 오버클럭이나 메모리 설정이 불안정할 수 있습니다.");
+        RefreshSummary();
+        return true;
+    }
+
+    /// <summary>점수 카드에 표시하고, 방해·다시 재기 안내 문구를 돌려준다</summary>
+    private string ShowScore(JsonElement j)
+    {
+        bool valid = j.GetProperty("valid").GetBoolean();
+        double single = j.GetProperty("single").GetDouble(), multi = j.GetProperty("multi").GetDouble();
+        SingleText.Text = valid ? single.ToString("0") : "무효";
+        MultiText.Text = valid ? multi.ToString("0") : "무효";
+        ScoreWords.Text = valid ? Summary.ScoreInWords(single, multi) : "";
         ScoreItems.ItemsSource = j.GetProperty("items").EnumerateArray().Select(it =>
         {
             string key = it.GetProperty("key").GetString() ?? "";
@@ -155,21 +206,22 @@ public partial class MainWindow : Window
         }).ToList();
         int retries = j.GetProperty("items").EnumerateArray().Sum(it => it.TryGetProperty("retries", out var rr) ? rr.GetInt32() : 0);
         bool disturbed = j.TryGetProperty("disturbed", out var d) && d.GetBoolean();
-        string note = disturbed ? " · 측정 중 다른 프로그램이 CPU를 많이 써서 결과가 낮게 나왔을 수 있습니다. 다른 프로그램을 닫고 다시 재 보세요."
-                    : retries > 0 ? $" · 다른 프로그램 때문에 {retries}회를 다시 쟀습니다." : "";
-        SetBusy(false, valid ? $"점수 측정 완료 (점수 체계 v{j.GetProperty("score_version").GetInt32()}){note}"
-                             : "계산 결과가 기대값과 달라서 점수를 내지 않았습니다. 오버클럭이나 메모리 설정이 불안정할 수 있습니다.");
+        return disturbed ? " · 측정 중 다른 프로그램이 CPU를 많이 써서 결과가 낮게 나왔을 수 있습니다. 다른 프로그램을 닫고 다시 재 보세요."
+             : retries > 0 ? $" · 다른 프로그램 때문에 {retries}회를 다시 쟀습니다." : "";
     }
 
-    private async void ThrottleButton_Click(object sender, RoutedEventArgs e)
+    private async Task<bool> RunThrottleAsync(string step)
     {
-        if (_runner is null) return;
-        SetBusy(true, "쓰로틀링 검사 중… (1분 동안 모든 코어에 부하를 겁니다)");
+        if (_runner is null) return false;
+        SetBusy(true, $"{step}발열 검사 중… (1분 동안 모든 코어에 부하를 겁니다. 팬 소리가 커질 수 있습니다)");
         var r = await _runner.RunAsync("throttle --seconds 60 --json");
-        SetBusy(false, r.Json is null ? $"쓰로틀링 검사 실패: {r.StdErr.Trim()}" : "쓰로틀링 검사 완료");
-        if (r.Json is null) return;
+        SetBusy(false, r.Json is null ? $"발열 검사 실패: {r.StdErr.Trim()}" : $"{step}발열 검사 완료");
+        if (r.Json is null) return false;
         _store.Save("throttle", r.Json.RootElement);
+        _throttle = r.Json.RootElement.Clone();
         ShowFindings(new[] { Diagnosis.FromThrottle(r.Json.RootElement) }, f => f.Title.Contains("쓰로틀링"));
+        RefreshSummary();
+        return true;
     }
 
     private void ShowHistory()
