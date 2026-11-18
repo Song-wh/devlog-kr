@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace CpuBench.App;
 
@@ -14,11 +15,55 @@ public static class Summary
 {
     /// <summary>메모리 멀티 읽기가 이론 대역폭의 이 비율보다 낮으면 "확인 필요". 개발 PC는 91%(DDR5 듀얼). 가정값 — 데이터가 모이면 조정</summary>
     public const double MemEfficiencyWarn = 0.80;
+    /// <summary>현실적으로 낼 수 있는 메모리 읽기 대역폭 = 이론값의 90%로 본다(발휘율 계산용 가정값, 개발 PC 91~92%)</summary>
+    public const double MemPractical = 0.90;
+    /// <summary>쉴 때 CPU 사용 중 이만큼은 정상으로 본다(Windows 자체 활동). 넘는 만큼 발휘율에서 뺀다(가정값)</summary>
+    public const double BackgroundAllowance = 3.0;
+
+    /// <summary>제 성능 발휘율: 발열 유지 × 메모리(현실 최대 대비) × 쉴 때 CPU 여유. 셋 다 잰 뒤에만 계산. 전원 설정 문제는 숫자로 못 바꿔서 빠져 있다.</summary>
+    public sealed record Performance(double Percent, double Thermal, double Memory, double Background);
+
+    public static Performance? Perf(JsonElement? info, JsonElement? check, JsonElement? score, JsonElement? throttle)
+    {
+        if (info is not JsonElement i || check is not JsonElement c || score is not JsonElement sc || throttle is not JsonElement th) return null;
+        double thermal = Math.Clamp((100 + th.GetProperty("throughput_change").GetDouble()) / 100, 0, 1);
+        double? potential = MemPotential(i, c);
+        var bw = sc.GetProperty("items").EnumerateArray().FirstOrDefault(x => x.GetProperty("key").GetString() == "mem_bw_mt");
+        if (potential is not double pot || pot <= 0 || bw.ValueKind != JsonValueKind.Object) return null;
+        double memory = Math.Clamp(bw.GetProperty("value").GetDouble() / pot / MemPractical, 0, 1);
+        double busy = c.GetProperty("background").GetProperty("busy_percent").GetDouble();
+        double background = Math.Clamp(1 - Math.Max(0, busy - BackgroundAllowance) / 100, 0.5, 1);
+        return new(thermal * memory * background * 100, thermal * 100, memory * 100, background * 100);
+    }
+
+    /// <summary>
+    /// 이 PC의 메모리가 낼 수 있어야 하는 이론 대역폭(GB/s). 지금 설정이 아니라 "제대로 꽂고 설정했을 때" 기준:
+    /// 싱글 채널·같은 채널 경고면 2채널로, XMP 꺼짐 경고면 정격 속도로 계산한다.
+    /// </summary>
+    public static double? MemPotential(JsonElement info, JsonElement check)
+    {
+        if (!info.TryGetProperty("memory", out var mem)) return null;
+        var mods = mem.GetProperty("modules").EnumerateArray().Where(m => m.GetProperty("size_bytes").GetInt64() > 0).ToList();
+        if (mods.Count == 0) return null;
+        int ch = mem.GetProperty("channels").GetInt32();
+        int speed = mods.Min(m => m.GetProperty("configured_speed").GetInt32());
+        foreach (var w in check.GetProperty("warnings").EnumerateArray())
+        {
+            string id = w.GetProperty("id").GetString() ?? "";
+            if (id is "single_channel" or "same_channel") ch = Math.Max(ch, 2);
+            if (id == "xmp_off")
+            {
+                var m = Regex.Match(w.GetProperty("message").GetString() ?? "", @"is rated (\d+) MT/s");
+                if (m.Success) speed = Math.Max(speed, int.Parse(m.Groups[1].Value));
+            }
+        }
+        return ch > 0 && speed > 0 ? speed * 8.0 * ch / 1000.0 : null;
+    }
 
     public static (string State, string Verdict, List<SummaryCard> Cards) Build(JsonElement? info, JsonElement? check, JsonElement? score, JsonElement? throttle)
     {
         var warnIds = check?.GetProperty("warnings").EnumerateArray().Select(w => w.GetProperty("id").GetString() ?? "").ToHashSet() ?? new();
-        var cards = new List<SummaryCard> { Cooling(throttle), Memory(info, check, score, warnIds), Background(check, warnIds), Power(check, warnIds) };
+        var cards = new List<SummaryCard> { Cooling(throttle), Memory(info, check, score, warnIds), Background(check, warnIds), Power(check, warnIds), Devices(check, warnIds) };
 
         int warn = cards.Count(c => c.State == "warn");
         int none = cards.Count(c => c.State == "none");
@@ -61,7 +106,7 @@ public static class Summary
             int ch = mem.GetProperty("channels").GetInt32();
             int speed = mods.Count > 0 ? mods.Min(m => m.GetProperty("configured_speed").GetInt32()) : 0;
             spec = mods.Count > 0 ? $"{(ch == 2 ? "듀얼 채널" : ch == 1 ? "싱글 채널" : $"{ch}채널")} · {mods[0].GetProperty("type").GetString()} {speed}" : "";
-            double theory = speed * 8.0 * ch / 1000.0;  // MT/s × 8바이트 × 채널 = MB/s → GB/s
+            double theory = (check is JsonElement ck ? MemPotential(i, ck) : null) ?? speed * 8.0 * ch / 1000.0;  // MT/s × 8바이트 × 채널 = MB/s → GB/s
             var bw = score?.GetProperty("items").EnumerateArray().FirstOrDefault(x => x.GetProperty("key").GetString() == "mem_bw_mt");
             if (theory > 0 && bw is JsonElement b && b.ValueKind == JsonValueKind.Object) eff = b.GetProperty("value").GetDouble() / theory;
         }
@@ -94,6 +139,17 @@ public static class Summary
         if (warnIds.Contains("efficiency_mode")) return new("warn", title, "최고의 전원 효율", "전원 모드를 '균형' 또는 '최고 성능'으로 바꾸세요.");
         if (warnIds.Contains("max_state")) return new("warn", title, "CPU 속도 제한", "최대 프로세서 상태가 100%가 아닙니다. 전원 옵션 고급 설정을 확인하세요.");
         return new("ok", title, "정상", "성능을 막는 설정이 없습니다.");
+    }
+
+    private static SummaryCard Devices(JsonElement? check, HashSet<string> warnIds)
+    {
+        const string title = "장치 연결";
+        if (check is not JsonElement c) return new("none", title, "아직 안 잼", "그래픽카드·SSD가 제 속도의 슬롯에 연결됐는지 봅니다.");
+        var list = c.TryGetProperty("pcie", out var p) ? p.EnumerateArray().ToList() : new();
+        if (warnIds.Contains("pcie_width")) return new("warn", title, "레인 수 부족", "그래픽카드나 SSD가 지원하는 것보다 좁게 연결돼 있습니다. 아래 진단을 확인하세요.");
+        if (warnIds.Contains("pcie_gen")) return new("warn", title, "SSD 속도 제한", "SSD가 지원하는 것보다 낮은 PCIe 세대로 연결돼 있습니다.");
+        if (list.Count == 0) return new("ok", title, "확인할 장치 없음", "PCIe 그래픽카드·NVMe SSD를 찾지 못했습니다(내장 그래픽·SATA SSD는 해당 없음).");
+        return new("ok", title, "정상", string.Join(", ", list.Select(Diagnosis.PcieText)) + ".");
     }
 
     /// <summary>점수를 말로: 고정 기준값 대비 몇 배인지</summary>

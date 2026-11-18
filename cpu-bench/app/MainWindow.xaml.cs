@@ -123,6 +123,19 @@ public partial class MainWindow : Window
         VerdictIcon.Foreground = brush(state);
         VerdictText.Text = verdict;
         SummaryCards.ItemsSource = cards.Select(c => new { c.Title, c.Value, c.Detail, Brush = brush(c.State) }).ToList();
+        var perf = Summary.Perf(_info, _check, _score, _throttle);
+        if (perf is null)
+        {
+            PerfText.Text = "—";
+            PerfText.Foreground = brush("none");
+            PerfDetail.Text = "'전체 점검'을 하면 나옵니다";
+        }
+        else
+        {
+            PerfText.Text = $"{perf.Percent:0}%";
+            PerfText.Foreground = brush(perf.Percent >= 90 ? "ok" : "warn");
+            PerfDetail.Text = $"발열 {perf.Thermal:0}% × 메모리 {perf.Memory:0}% × 쉴 때 여유 {perf.Background:0}%\n전원 설정 문제는 숫자에 넣지 않고 따로 표시";
+        }
     }
 
     private async void FullButton_Click(object sender, RoutedEventArgs e)
@@ -197,7 +210,11 @@ public partial class MainWindow : Window
         double single = j.GetProperty("single").GetDouble(), multi = j.GetProperty("multi").GetDouble();
         SingleText.Text = valid ? single.ToString("0") : "무효";
         MultiText.Text = valid ? multi.ToString("0") : "무효";
-        ScoreWords.Text = valid ? Summary.ScoreInWords(single, multi) : "";
+        bool wasDisturbed = j.TryGetProperty("disturbed", out var dist) && dist.GetBoolean();
+        // 방해 표시는 상태 줄에만 잠깐 나오면 앱을 다시 켰을 때 사라진다 → 점수 카드에 계속 남긴다
+        ScoreWords.Text = !valid ? "" : (wasDisturbed ? "⚠ 이 점수는 측정 중 다른 프로그램이 CPU를 많이 써서 낮게 나왔을 수 있습니다. 다른 프로그램을 닫고 다시 재 보세요.\n" : "")
+                          + Summary.ScoreInWords(single, multi);
+        ScoreWords.Foreground = (Brush)Application.Current.Resources[wasDisturbed ? "Accent" : "Text"];
         ScoreItems.ItemsSource = j.GetProperty("items").EnumerateArray().Select(it =>
         {
             string key = it.GetProperty("key").GetString() ?? "";

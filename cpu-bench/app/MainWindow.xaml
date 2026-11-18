@@ -26,10 +26,21 @@
         <!-- 한눈에 보는 상태 -->
         <Border DockPanel.Dock="Top" Style="{StaticResource Card}" Padding="20,16">
             <StackPanel>
-                <TextBlock FontSize="22" FontWeight="Bold"><Run x:Name="VerdictIcon" Text="•" /><Run Text="  " /><Run x:Name="VerdictText" Text="" /></TextBlock>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock FontSize="22" FontWeight="Bold" VerticalAlignment="Center"><Run x:Name="VerdictIcon" Text="•" /><Run Text="  " /><Run x:Name="VerdictText" Text="" /></TextBlock>
+                    <StackPanel Grid.Column="1" HorizontalAlignment="Right" Margin="20,0,0,0">
+                        <TextBlock HorizontalAlignment="Right" FontSize="13" Foreground="{StaticResource Muted}" Text="제 성능 발휘" />
+                        <TextBlock x:Name="PerfText" HorizontalAlignment="Right" FontSize="40" FontWeight="Bold" Text="—" FontFamily="Cascadia Mono, Consolas" />
+                        <TextBlock x:Name="PerfDetail" HorizontalAlignment="Right" FontSize="12" Foreground="{StaticResource Muted}" Text="" TextAlignment="Right" />
+                    </StackPanel>
+                </Grid>
                 <ItemsControl x:Name="SummaryCards" Margin="0,14,0,0">
                     <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate><UniformGrid Columns="4" /></ItemsPanelTemplate>
+                        <ItemsPanelTemplate><UniformGrid Columns="5" /></ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
