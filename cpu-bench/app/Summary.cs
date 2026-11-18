@@ -60,20 +60,37 @@ public static class Summary
         return ch > 0 && speed > 0 ? speed * 8.0 * ch / 1000.0 : null;
     }
 
-    public static (string State, string Verdict, List<SummaryCard> Cards) Build(JsonElement? info, JsonElement? check, JsonElement? score, JsonElement? throttle)
+    public static (string State, string Verdict, List<SummaryCard> Cards) Build(JsonElement? info, JsonElement? check, JsonElement? score, JsonElement? throttle, JsonElement? internet = null)
     {
         var warnIds = check?.GetProperty("warnings").EnumerateArray().Select(w => w.GetProperty("id").GetString() ?? "").ToHashSet() ?? new();
         var cards = new List<SummaryCard> { Cooling(throttle), Memory(info, check, score, warnIds), Background(check, warnIds), Power(check, warnIds), Devices(check, warnIds) };
+        // 인터넷 속도는 선택 측정(외부 서버 사용)이라 결론 줄의 "아직 안 잼" 계산에는 넣지 않는다
+        var internetCard = Internet(check, internet);
 
         int warn = cards.Count(c => c.State == "warn");
         int none = cards.Count(c => c.State == "none");
         if (none == cards.Count)
-            return ("none", "아직 점검하지 않았습니다. '전체 점검'을 누르면 2분 30초쯤 걸립니다.", cards);
+            return ("none", "아직 점검하지 않았습니다. '전체 점검'을 누르면 2분 30초쯤 걸립니다.", cards.Append(internetCard).ToList());
         if (warn > 0)
-            return ("warn", $"성능을 다 못 내게 할 수 있는 것이 {warn}가지 있습니다", cards);
+            return ("warn", $"성능을 다 못 내게 할 수 있는 것이 {warn}가지 있습니다", cards.Append(internetCard).ToList());
         if (none > 0)
-            return ("none", "지금까지 잰 항목은 모두 정상입니다. 나머지도 재려면 '전체 점검'을 누르세요.", cards);
-        return ("ok", "이 PC는 제 성능을 내고 있습니다", cards);
+            return ("none", "지금까지 잰 항목은 모두 정상입니다. 나머지도 재려면 '전체 점검'을 누르세요.", cards.Append(internetCard).ToList());
+        return ("ok", "이 PC는 제 성능을 내고 있습니다", cards.Append(internetCard).ToList());
+    }
+
+    private static SummaryCard Internet(JsonElement? check, JsonElement? internet)
+    {
+        const string title = "인터넷 속도 (선택)";
+        if (internet is not JsonElement n) return new("none", title, "아직 안 잼", "'인터넷 속도'를 누르면 M-Lab 서버로 20초 동안 잽니다.");
+        double down = n.GetProperty("download_mbps").GetDouble(), up = n.GetProperty("upload_mbps").GetDouble();
+        double rtt = n.GetProperty("min_rtt_ms").GetDouble();
+        string city = n.GetProperty("city").GetString() ?? "";
+        double linkMbps = check?.TryGetProperty("network", out var net) == true && net.GetArrayLength() > 0
+            ? net.EnumerateArray().Max(l => Math.Max(l.GetProperty("rx_bps").GetDouble(), l.GetProperty("tx_bps").GetDouble())) / 1e6 : 0;
+        string where = linkMbps > 0 && down >= linkMbps * 0.7
+            ? $"PC 연결({linkMbps:0} Mbps) 한도에 가깝습니다. 더 빠른 요금제라면 랜·공유기가 한계입니다."
+            : linkMbps > 0 ? $"PC 연결({linkMbps:0} Mbps)은 여유가 있습니다. 더 느리게 느껴지면 회선·공유기 쪽입니다." : "";
+        return new("ok", title, $"↓{down:0} ↑{up:0} Mbps", $"M-Lab {city}, 지연 {rtt:0} ms. {where} 요금 감면 청구에는 가입 통신사 측정 결과가 필요합니다.");
     }
 
     private static SummaryCard Cooling(JsonElement? t)

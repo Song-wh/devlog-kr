@@ -40,11 +40,11 @@
                 </Grid>
                 <ItemsControl x:Name="SummaryCards" Margin="0,14,0,0">
                     <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate><UniformGrid Columns="5" /></ItemsPanelTemplate>
+                        <ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Border Margin="0,0,12,0" Padding="14,12" CornerRadius="8" Background="{StaticResource Bg}" BorderThickness="0,0,0,3" BorderBrush="{Binding Brush}">
+                            <Border Margin="0,0,12,12" Padding="14,12" CornerRadius="8" Background="{StaticResource Bg}" BorderThickness="0,0,0,3" BorderBrush="{Binding Brush}">
                                 <StackPanel>
                                     <TextBlock Text="{Binding Title}" Foreground="{StaticResource Muted}" FontSize="13" />
                                     <TextBlock Text="{Binding Value}" Foreground="{Binding Brush}" FontSize="20" FontWeight="Bold" Margin="0,4,0,4" />
@@ -65,6 +65,7 @@
                 <Button x:Name="CheckButton" Content="환경 점검 (3초)" Click="CheckButton_Click" Background="{StaticResource Panel}" Foreground="{StaticResource Text}" FontWeight="Normal" Padding="12,8" />
                 <Button x:Name="ScoreButton" Content="점수 측정 (1분 남짓)" Click="ScoreButton_Click" Background="{StaticResource Panel}" Foreground="{StaticResource Text}" FontWeight="Normal" Padding="12,8" />
                 <Button x:Name="ThrottleButton" Content="발열 검사 (1분)" Click="ThrottleButton_Click" Background="{StaticResource Panel}" Foreground="{StaticResource Text}" FontWeight="Normal" Padding="12,8" />
+                <Button x:Name="NetButton" Content="인터넷 속도 (20초)" Click="NetButton_Click" Background="{StaticResource Panel}" Foreground="{StaticResource Text}" FontWeight="Normal" Padding="12,8" />
             </StackPanel>
             <ProgressBar x:Name="Progress" Height="6" Margin="0,14,0,0" Minimum="0" Maximum="1" Visibility="Hidden"
                          Foreground="{StaticResource Accent}" Background="{StaticResource Panel}" BorderThickness="0" />
@@ -173,7 +174,7 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <TextBlock Margin="0,12,0,0" FontSize="13" Foreground="{StaticResource Muted}"
-                                   Text="진단은 읽기만 합니다. 설정을 바꾸거나 프로그램을 종료하지 않고, 측정 결과는 어디에도 보내지 않습니다." />
+                                   Text="진단은 읽기만 합니다. 설정을 바꾸거나 프로그램을 종료하지 않고, PC 측정 결과는 어디에도 보내지 않습니다. 인터넷 속도 측정을 누를 때만 M-Lab 서버와 통신합니다." />
                     </StackPanel>
                 </Border>
             </ScrollViewer>

@@ -14,7 +14,7 @@ public partial class MainWindow : Window
     private readonly AppSettings _settings = AppSettings.Load();
     private string? _updateUrl;
     // 요약에 쓰는 가장 최근 결과 (앱을 다시 켜면 저장된 결과에서 읽음)
-    private JsonElement? _info, _check, _score, _throttle;
+    private JsonElement? _info, _check, _score, _throttle, _internet;
 
     // 점수 항목 키 → 화면 이름
     private static readonly Dictionary<string, string> ItemNames = new()
@@ -37,6 +37,7 @@ public partial class MainWindow : Window
             _check = _store.LoadLatest("check");
             _score = _store.LoadLatest("score");
             _throttle = _store.LoadLatest("throttle");
+            _internet = _store.LoadLatest("internet");
             if (_check is JsonElement c) ShowFindings(Diagnosis.FromCheck(c), f => !f.Title.Contains("쓰로틀링"));
             if (_throttle is JsonElement t) ShowFindings(new[] { Diagnosis.FromThrottle(t) }, f => f.Title.Contains("쓰로틀링"));
             if (_score is JsonElement sc) ShowScore(sc);
@@ -100,7 +101,7 @@ public partial class MainWindow : Window
 
     private void SetBusy(bool busy, string status)
     {
-        FullButton.IsEnabled = CheckButton.IsEnabled = ScoreButton.IsEnabled = ThrottleButton.IsEnabled = !busy;
+        FullButton.IsEnabled = CheckButton.IsEnabled = ScoreButton.IsEnabled = ThrottleButton.IsEnabled = NetButton.IsEnabled = !busy;
         Progress.Visibility = busy ? Visibility.Visible : Visibility.Hidden;
         Progress.IsIndeterminate = busy;
         StatusText.Text = status;
@@ -117,7 +118,7 @@ public partial class MainWindow : Window
 
     private void RefreshSummary()
     {
-        var (state, verdict, cards) = Summary.Build(_info, _check, _score, _throttle);
+        var (state, verdict, cards) = Summary.Build(_info, _check, _score, _throttle, _internet);
         var brush = (string st) => (Brush)Application.Current.Resources[st == "ok" ? "Good" : st == "warn" ? "Accent" : "Muted"];
         VerdictIcon.Text = state == "ok" ? "✔" : state == "warn" ? "⚠" : "•";
         VerdictIcon.Foreground = brush(state);
@@ -152,6 +153,38 @@ public partial class MainWindow : Window
     }
 
     private async void CheckButton_Click(object sender, RoutedEventArgs e) => await RunCheckAsync("");
+
+    private async void NetButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_settings.MlabConsent)
+        {
+            var ok = MessageBox.Show(this,
+                "인터넷 속도는 M-Lab(Measurement Lab)의 공개 측정 서버와 데이터를 주고받아 잽니다. 다운로드·업로드 각 10초, 데이터를 수백 MB 쓸 수 있습니다.\n\n" +
+                "M-Lab은 인터넷 연구용 공개 플랫폼이라, 이 측정의 결과(속도)와 공인 IP 주소가 M-Lab의 공개 데이터로 남습니다. PC 측정 결과나 PC 정보는 보내지 않습니다.\n\n" +
+                "계속할까요? (한 번 동의하면 다시 묻지 않습니다)",
+                "인터넷 속도 측정", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+            if (ok != MessageBoxResult.OK) return;
+            _settings.MlabConsent = true;
+            _settings.Save();
+        }
+        SetBusy(true, "인터넷 속도 측정 중…");
+        try
+        {
+            var r = await NetSpeed.RunAsync(UpdateCheck.Current.ToString(), new Progress<string>(s => StatusText.Text = s), CancellationToken.None);
+            var json = JsonSerializer.SerializeToElement(new
+            {
+                download_mbps = r.DownloadMbps, upload_mbps = r.UploadMbps, min_rtt_ms = r.MinRttMs, server = r.Server, city = r.City,
+            });
+            _store.Save("internet", json);
+            _internet = json;
+            SetBusy(false, $"인터넷 속도 측정 완료 (M-Lab {r.City})");
+            RefreshSummary();
+        }
+        catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or System.Net.WebSockets.WebSocketException or OperationCanceledException or JsonException or KeyNotFoundException or InvalidOperationException)
+        {
+            SetBusy(false, $"인터넷 속도 측정 실패: {ex.Message}");
+        }
+    }
     private async void ScoreButton_Click(object sender, RoutedEventArgs e) => await RunScoreAsync("");
     private async void ThrottleButton_Click(object sender, RoutedEventArgs e) => await RunThrottleAsync("");
 
