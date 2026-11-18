@@ -1,0 +1,117 @@
+// Package workspace isolates each request in its own git worktree and branch
+// so the agent never touches the user's working folder or target branch.
+package workspace
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
+
+// Worktree is one isolated checkout.
+type Worktree struct {
+	Repo   string // original repository (top level)
+	Dir    string // worktree directory
+	Branch string
+	Base   string // commit the branch started from
+}
+
+// Change is one changed path as reported by git status.
+type Change struct {
+	Status string // two-letter porcelain code, e.g. " M", "??"
+	Path   string
+}
+
+func git(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
+	}
+	return out.String(), nil
+}
+
+// TopLevel returns the repository root containing dir.
+func TopLevel(dir string) (string, error) {
+	out, err := git(dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(strings.TrimSpace(out)), nil
+}
+
+// Create adds a worktree at root/id on a new branch aio/<id> from HEAD.
+func Create(repo, root, id string) (*Worktree, error) {
+	top, err := TopLevel(repo)
+	if err != nil {
+		return nil, err
+	}
+	base, err := git(top, "rev-parse", "HEAD")
+	if err != nil {
+		return nil, fmt.Errorf("repository has no commit yet: %w", err)
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return nil, err
+	}
+	w := &Worktree{
+		Repo:   top,
+		Dir:    filepath.Join(root, id),
+		Branch: "aio/" + id,
+		Base:   strings.TrimSpace(base),
+	}
+	if _, err := git(top, "worktree", "add", "-b", w.Branch, w.Dir, w.Base); err != nil {
+		return nil, err
+	}
+	return w, nil
+}
+
+// Status lists changed and untracked files in dir.
+func Status(dir string) ([]Change, error) {
+	out, err := git(dir, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	var changes []Change
+	parts := strings.Split(out, "\x00")
+	for i := 0; i < len(parts); i++ {
+		p := parts[i]
+		if len(p) < 4 {
+			continue
+		}
+		c := Change{Status: p[:2], Path: p[3:]}
+		if c.Status[0] == 'R' || c.Status[0] == 'C' {
+			i++ // the original path follows a rename/copy entry
+		}
+		changes = append(changes, c)
+	}
+	return changes, nil
+}
+
+// Diff returns the full diff of dir against its base, including new files.
+func (w *Worktree) Diff() (string, error) {
+	// Mark untracked files as intent-to-add so they show up in the diff.
+	if _, err := git(w.Dir, "add", "--intent-to-add", "--all"); err != nil {
+		return "", err
+	}
+	return git(w.Dir, "diff", w.Base)
+}
+
+// Remove deletes the worktree and, if deleteBranch, its branch.
+func (w *Worktree) Remove(deleteBranch bool) error {
+	var errs []error
+	if _, err := git(w.Repo, "worktree", "remove", "--force", w.Dir); err != nil {
+		errs = append(errs, err)
+	}
+	if deleteBranch {
+		if _, err := git(w.Repo, "branch", "-D", w.Branch); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
