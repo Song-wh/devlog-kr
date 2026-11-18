@@ -152,6 +152,26 @@ public static class Summary
         return new("ok", title, "정상", string.Join(", ", list.Select(Diagnosis.PcieText)) + ".");
     }
 
+    /// <summary>
+    /// 싱글 측정 도중 코어 평균 클럭(측정 프로그램 0.3.0 이후 기록). 싱글 점수는 이 클럭을 거의 그대로 따라간다(조사 006: 상관 0.92).
+    /// 회차마다 클럭이 5% 넘게 달랐다면 다른 프로그램 때문일 가능성을 안내한다. 점수는 바꾸지 않는다.
+    /// </summary>
+    public static string ClockInWords(JsonElement score)
+    {
+        var clocks = score.GetProperty("items").EnumerateArray()
+            .Where(i => (i.GetProperty("key").GetString() ?? "").EndsWith("_st") && i.TryGetProperty("runs", out _))
+            .SelectMany(i => i.GetProperty("runs").EnumerateArray())
+            .Select(r => r.TryGetProperty("clock_during_ghz", out var c) ? c.GetDouble() : 0)
+            .Where(c => c > 0.5).ToList();
+        if (clocks.Count == 0) return "";
+        double lo = clocks.Min(), hi = clocks.Max(), avg = clocks.Average();
+        double spread = (hi - lo) / hi * 100;
+        string text = $"싱글 측정 중 코어 평균 클럭 {avg:0.00} GHz (회차별 {lo:0.00}~{hi:0.00} GHz).";
+        if (spread > 5)
+            text += $" 회차마다 클럭이 {spread:0}% 달랐습니다. 싱글 점수는 클럭을 그대로 따라가므로, 다른 프로그램을 닫으면 더 안정적으로 나옵니다.";
+        return text;
+    }
+
     /// <summary>점수를 말로: 고정 기준값 대비 몇 배인지</summary>
     public static string ScoreInWords(double single, double multi) =>
         $"싱글은 프로그램 하나를 돌릴 때, 멀티는 여러 일을 한꺼번에 할 때의 빠르기입니다. 기준값(1000)보다 싱글 {single / 1000:0.00}배, 멀티 {multi / 1000:0.00}배.";

@@ -215,6 +215,7 @@ public partial class MainWindow : Window
         ScoreWords.Text = !valid ? "" : (wasDisturbed ? "⚠ 이 점수는 측정 중 다른 프로그램이 CPU를 많이 써서 낮게 나왔을 수 있습니다. 다른 프로그램을 닫고 다시 재 보세요.\n" : "")
                           + Summary.ScoreInWords(single, multi);
         ScoreWords.Foreground = (Brush)Application.Current.Resources[wasDisturbed ? "Accent" : "Text"];
+        ClockText.Text = Summary.ClockInWords(j);
         ScoreItems.ItemsSource = j.GetProperty("items").EnumerateArray().Select(it =>
         {
             string key = it.GetProperty("key").GetString() ?? "";
