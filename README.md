@@ -6,7 +6,7 @@
 
 | 프로젝트 | 설명 | 상태 |
 |---|---|---|
-| [cpu-bench](cpu-bench/) | 점수만 보여 주지 않고, 내 PC가 제 성능을 내는지와 그 이유까지 알려 주는 Windows용 진단형 CPU 벤치마크 · [내려받기](https://github.com/Song-wh/devlog-kr/releases?q=cpu-bench) | 개발 중 (0.4.0 배포) |
+| [cpu-bench](cpu-bench/) | 점수만 보여 주지 않고, 내 PC가 제 성능을 내는지와 그 이유까지 알려 주는 Windows용 진단형 CPU 벤치마크 · [내려받기](https://github.com/Song-wh/devlog-kr/releases?q=cpu-bench) | 개발 중 (0.5.0 배포) |
 
 상태 표시: **개발 중** / **운영 중** / **유지보수만** (버그 수정만) / **보관** (더 이상 고치지 않음)
 
