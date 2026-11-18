@@ -14,6 +14,7 @@
 #include "bench_api.h"
 #include "clock.h"
 #include "envcheck.h"
+#include "pcie.h"
 #include "ramspec.h"
 #include "score.h"
 #include "smbios.h"
@@ -120,6 +121,8 @@ int cmd_check(int argc, wchar_t** argv) {
     const bool mem_ok = query_memory(mem, mem_err);
     if (mem_ok)
         for (auto& w : evaluate_memory(mem)) warnings.push_back(std::move(w));
+    const auto pcie = query_pcie();
+    for (auto& w : evaluate_pcie(pcie)) warnings.push_back(std::move(w));
     if (json) {
         std::printf("{\"power\":{\"known\":%s,\"on_ac\":%s,\"has_battery\":%s,\"battery_percent\":%d},"
                     "\"power_plan\":{\"guid\":%s,\"name\":%s,\"kind\":%s,\"overlay\":%s,\"max_processor_state\":%d,"
@@ -131,7 +134,12 @@ int cmd_check(int argc, wchar_t** argv) {
         for (size_t i = 0; i < r.top.size(); ++i)
             std::printf("%s{\"name\":%s,\"pid\":%u,\"cpu_percent\":%.2f}", i ? "," : "", json_str(r.top[i].name).c_str(),
                         r.top[i].pid, r.top[i].cpu_percent);
-        std::printf("]},\"warnings\":[");
+        std::printf("]},\"pcie\":[");
+        for (size_t i = 0; i < pcie.size(); ++i)
+            std::printf("%s{\"kind\":%s,\"name\":%s,\"cur_gen\":%u,\"max_gen\":%u,\"cur_width\":%u,\"max_width\":%u}", i ? "," : "",
+                        json_str(pcie[i].kind).c_str(), json_str(pcie[i].name).c_str(), pcie[i].cur_gen, pcie[i].max_gen,
+                        pcie[i].cur_width, pcie[i].max_width);
+        std::printf("],\"warnings\":[");
         for (size_t i = 0; i < warnings.size(); ++i)
             std::printf("%s{\"id\":%s,\"message\":%s}", i ? "," : "", json_str(warnings[i].id).c_str(),
                         json_str(warnings[i].message).c_str());
@@ -157,6 +165,8 @@ int cmd_check(int argc, wchar_t** argv) {
     } else {
         std::printf("Memory   : unavailable (%s)\n", mem_err.c_str());
     }
+    for (const auto& d : pcie)
+        std::printf("PCIe     : %-4s gen %u/%u, x%u/x%u  %s\n", d.kind.c_str(), d.cur_gen, d.max_gen, d.cur_width, d.max_width, d.name.c_str());
     if (warnings.empty()) std::printf("Result   : ready to measure\n");
     for (const auto& w : warnings) std::printf("Warning  : %s\n", w.message.c_str());
     return 0;

@@ -36,7 +36,7 @@ struct EnvReport {
 
 struct EnvWarning {
     std::string id;       // "on_battery", "power_saver", "efficiency_mode", "max_state", "background",
-                          // "single_channel", "same_channel", "xmp_off", "below_jedec"
+                          // "single_channel", "same_channel", "xmp_off", "below_jedec", "pcie_width", "pcie_gen"
     std::string message;  // 영어 (콘솔 코드 페이지 문제)
 };
 
