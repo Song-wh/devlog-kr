@@ -17,6 +17,8 @@ type Spec struct {
 	MaxBudgetUSD float64       // 0 = no limit passed to the engine
 	Timeout      time.Duration // 0 = no timeout
 	LogDir       string        // raw output is written here
+	SystemPrompt string        // role instructions appended to the engine's own
+	JSONSchema   string        // if set, the final answer must match this schema
 }
 
 // EventKind tells what an Event carries.
@@ -57,6 +59,7 @@ type Result struct {
 	Status      Status
 	Subtype     string // engine's own end reason
 	Text        string // final assistant message
+	Structured  []byte // final answer as JSON when Spec.JSONSchema was set
 	Turns       int
 	Duration    time.Duration
 	Usage       Usage

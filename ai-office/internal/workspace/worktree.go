@@ -102,6 +102,56 @@ func (w *Worktree) Diff() (string, error) {
 	return git(w.Dir, "diff", w.Base)
 }
 
+// Commit stages everything in the worktree and commits it on its branch.
+// The author is fixed so the user's own identity is never used for agent work.
+func (w *Worktree) Commit(message string) error {
+	if _, err := git(w.Dir, "add", "--all"); err != nil {
+		return err
+	}
+	_, err := git(w.Dir, "-c", "user.name=AI Office", "-c", "user.email=ai-office@localhost",
+		"commit", "--quiet", "-m", message)
+	return err
+}
+
+// DiffStat summarizes the branch against its base.
+func (w *Worktree) DiffStat() (string, error) {
+	return git(w.Dir, "diff", "--stat", w.Base)
+}
+
+// MatchAny reports whether path (slash-separated, relative) matches any of
+// the glob patterns, tried against both the full path and the base name.
+func MatchAny(patterns []string, path string) bool {
+	base := path
+	if i := strings.LastIndexByte(path, '/'); i >= 0 {
+		base = path[i+1:]
+	}
+	for _, p := range patterns {
+		if ok, _ := filepath.Match(p, path); ok {
+			return true
+		}
+		if ok, _ := filepath.Match(p, base); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// Restore puts path back to its state at the base commit: tracked files are
+// checked out from base, files that did not exist there are deleted.
+func (w *Worktree) Restore(path string) error {
+	if _, err := git(w.Dir, "cat-file", "-e", w.Base+":"+path); err == nil {
+		_, err := git(w.Dir, "checkout", w.Base, "--", path)
+		return err
+	}
+	// Not in base: drop any intent-to-add entry, then delete the file.
+	git(w.Dir, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", path)
+	err := os.Remove(filepath.Join(w.Dir, filepath.FromSlash(path)))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
 // Remove deletes the worktree and, if deleteBranch, its branch.
 func (w *Worktree) Remove(deleteBranch bool) error {
 	var errs []error

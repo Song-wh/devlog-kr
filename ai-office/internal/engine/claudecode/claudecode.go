@@ -70,6 +70,12 @@ func Args(spec engine.Spec) []string {
 	if spec.Model != "" {
 		args = append(args, "--model", spec.Model)
 	}
+	if spec.SystemPrompt != "" {
+		args = append(args, "--append-system-prompt", spec.SystemPrompt)
+	}
+	if spec.JSONSchema != "" {
+		args = append(args, "--json-schema", spec.JSONSchema)
+	}
 	if spec.MaxBudgetUSD > 0 {
 		args = append(args, "--max-budget-usd", fmt.Sprintf("%.2f", spec.MaxBudgetUSD))
 	}
@@ -182,6 +188,7 @@ type streamMsg struct {
 	TotalCostUSD      float64         `json:"total_cost_usd"`
 	SessionID         string          `json:"session_id"`
 	PermissionDenials json.RawMessage `json:"permission_denials"`
+	StructuredOutput  json.RawMessage `json:"structured_output"`
 	Usage             *struct {
 		InputTokens              int64 `json:"input_tokens"`
 		OutputTokens             int64 `json:"output_tokens"`
@@ -345,6 +352,9 @@ func parseStream(r io.Reader, onEvent func(engine.Event), res *engine.Result) (b
 			gotResult = true
 			res.Subtype = m.Subtype
 			res.Text = m.Result
+			if len(m.StructuredOutput) > 0 && string(m.StructuredOutput) != "null" {
+				res.Structured = append([]byte(nil), m.StructuredOutput...)
+			}
 			res.Turns = m.NumTurns
 			res.SessionID = m.SessionID
 			res.Usage.CostUSD = m.TotalCostUSD
