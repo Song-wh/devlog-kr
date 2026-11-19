@@ -168,6 +168,30 @@ export namespace ollama {
 	        this.quant = source["quant"];
 	    }
 	}
+	export class ProbeResult {
+	    model: string;
+	    toolCalls: number;
+	    readFile: boolean;
+	    json: boolean;
+	    seconds: number;
+	    note?: string;
+	    at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProbeResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.model = source["model"];
+	        this.toolCalls = source["toolCalls"];
+	        this.readFile = source["readFile"];
+	        this.json = source["json"];
+	        this.seconds = source["seconds"];
+	        this.note = source["note"];
+	        this.at = source["at"];
+	    }
+	}
 	export class Status {
 	    running: boolean;
 	    version: string;

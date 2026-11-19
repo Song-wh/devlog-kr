@@ -32,7 +32,11 @@ export function Models():Promise<Array<string>>;
 
 export function Ollama():Promise<ollama.Status>;
 
+export function OllamaProbes():Promise<Record<string, ollama.ProbeResult>>;
+
 export function PickFolder():Promise<string>;
+
+export function ProbeModel(arg1:string):Promise<ollama.ProbeResult>;
 
 export function Projects():Promise<Array<store.Project>>;
 

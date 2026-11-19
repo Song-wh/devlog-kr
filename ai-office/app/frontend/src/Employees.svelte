@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { CancelLogin, DeleteEmployee, Employees, Login, LoginCode, Logout, Models, Ollama, SaveEmployee } from '../wailsjs/go/main/App'
+  import { CancelLogin, DeleteEmployee, Employees, Login, LoginCode, Logout, Models, Ollama, OllamaProbes, ProbeModel, SaveEmployee } from '../wailsjs/go/main/App'
   import { EventsOn } from '../wailsjs/runtime/runtime'
   import type { main } from '../wailsjs/go/models'
 
@@ -10,6 +10,29 @@
   let loading = $state(true)
   let error = $state('')
   let editing = $state<any | null>(null) // employee being edited (copy)
+  type Probe = { model: string; toolCalls: number; readFile: boolean; json: boolean; seconds: number; note?: string }
+  let probes = $state<Record<string, Probe>>({})
+  let probing = $state<Record<string, boolean>>({})
+  const probeOf = (m: string) => probes[m] ?? probes[m + ':latest'] ?? probes[m.replace(/:latest$/, '')]
+  function probeText(m: string) {
+    const r = probeOf(m)
+    if (!r) return '시험 안 함'
+    if (r.readFile && r.json) return `사용 가능 (${r.seconds.toFixed(0)}초)`
+    if (!r.toolCalls) return '불가: 파일을 읽지 못함(도구 호출 안 함)'
+    if (!r.json) return '불안정: 정해진 형식으로 답하지 못함'
+    return '불가: ' + (r.note ?? '')
+  }
+  async function probe(m: string) {
+    probing[m] = true
+    try {
+      const r = await ProbeModel(m)
+      probes[m] = r as any
+    } catch (e) {
+      error = String(e)
+    } finally {
+      probing[m] = false
+    }
+  }
   let modelChoices = $derived(editing?.connection === 'ollama' ? (local?.models ?? []).map((m) => m.name) : models)
   let loginLines = $state<Record<number, string[]>>({})
   let codes = $state<Record<number, string>>({})
@@ -32,6 +55,7 @@
     load()
     Models().then((m) => (models = m ?? []))
     Ollama().then((s) => (local = s as any))
+    OllamaProbes().then((p) => (probes = (p ?? {}) as any))
     const off1 = EventsOn('login', (ev: { id: number; line: string }) => {
       loginLines[ev.id] = [...(loginLines[ev.id] ?? []), ev.line]
     })
@@ -85,7 +109,7 @@
     const s = e.status
     if (e.loggingIn) return '로그인 진행 중…'
     if (s?.error) return '확인 실패: ' + s.error
-    if (e.connection === 'ollama') return s?.loggedIn ? `${s.plan} · ${e.model}` : '사용 불가'
+    if (e.connection === 'ollama') return s?.loggedIn ? `${s.plan} · ${e.model} · ${probeText(e.model)}` : '사용 불가'
     if (!s?.loggedIn) return '로그인 안 됨'
     const kind = s.authMethod === 'claude.ai' ? `구독${s.plan ? ' (' + s.plan + ')' : ''}` : s.authMethod === 'console' ? 'Console(API 과금)' : s.authMethod
     return `${kind}${s.email ? ' · ' + mask(s.email) : ''}`
@@ -143,8 +167,21 @@
       <p class="small">
         {#if !local?.running}Ollama가 실행 중이 아닙니다. Ollama를 켠 뒤 다시 열어 주세요.
         {:else if !local.models.length}설치된 모델이 없습니다. 터미널에서 <span class="mono">ollama pull qwen3:8b</span> 처럼 받으세요.
-        {:else}설치된 모델: {local.models.map((m) => `${m.name} (${m.params}, ${m.sizeGb.toFixed(1)}GB)`).join(' · ')}{/if}
+        {:else}직원으로 쓰려면 파일을 직접 읽고(도구 호출) 정해진 형식으로 답할 수 있어야 합니다.{/if}
       </p>
+      {#if local?.models?.length}
+        <div class="probes">
+          {#each local.models as m}
+            {@const r = probeOf(m.name)}
+            <div class="probe" class:ok={r?.readFile && r?.json} class:bad={r && !(r.readFile && r.json)}>
+              <button class="pick" onclick={() => (editing.model = m.name)} class:on={editing.model === m.name}>{m.name}</button>
+              <span class="muted">{m.params} · {m.sizeGb.toFixed(1)}GB</span>
+              <span class="pr">{probing[m.name] ? '시험 중… (최대 몇 분)' : probeText(m.name)}</span>
+              <button class="mini" disabled={probing[m.name]} onclick={() => probe(m.name)}>{r ? '다시 시험' : '모델 시험'}</button>
+            </div>
+          {/each}
+        </div>
+      {/if}
     {/if}
     <label for="p">추가 지시 (선택, 역할 기본 지시 뒤에 붙음)</label>
     <textarea id="p" rows="3" bind:value={editing.prompt} placeholder="예: 주석과 커밋 설명은 한국어로 쓴다"></textarea>
@@ -228,6 +265,13 @@
   .dot.ok { background: var(--green); }
   .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
   .lbl { display: block; color: var(--muted); font-size: 12px; margin: 14px 0 6px; }
+  .probes { display: grid; gap: 4px; margin-top: 8px; }
+  .probe { display: grid; grid-template-columns: 200px 120px 1fr auto; gap: 10px; align-items: center; font-size: 12.5px; padding: 4px 8px; border-radius: 6px; background: var(--panel2); }
+  .probe.ok .pr { color: var(--green); }
+  .probe.bad .pr { color: var(--red); }
+  .probe .pick { text-align: left; padding: 3px 8px; font-family: var(--mono); font-size: 12px; }
+  .probe .pick.on { border-color: var(--accent); }
+  .mini { padding: 3px 10px; font-size: 12px; }
   .conn { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
   .conn button { text-align: left; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; }
   .conn span { color: var(--muted); font-size: 12px; }

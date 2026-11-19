@@ -315,7 +315,7 @@ func (r *run) plan(ctx context.Context) (*plan, error) {
 		return nil, err
 	}
 	var p plan
-	if err := json.Unmarshal(res.Structured, &p); err != nil || len(p.Tasks) == 0 {
+	if err := decodeAnswer(res, &p); err != nil || len(p.Tasks) == 0 {
 		r.o.Store.SetTaskStatus(taskID, store.Failed, "plan was not valid JSON")
 		return nil, fmt.Errorf("PM did not return a valid plan: %v", err)
 	}
@@ -340,6 +340,12 @@ func (r *run) runTask(ctx context.Context, taskID int64, role, model, prompt, sy
 // runAgent runs one employee once. manageTask=false leaves the task's status
 // alone (a meeting is one task with many statements).
 func (r *run) runAgent(ctx context.Context, taskID int64, role string, ag Agent, model, prompt, system, schema string, manageTask bool) (engine.Result, error) {
+	if ag.Local {
+		// One graphics card: local models take turns. Running several at once
+		// makes Ollama swap them in and out until runs time out (bug 014).
+		localGPU.Lock()
+		defer localGPU.Unlock()
+	}
 	st := r.o.Store
 	spent, _ := st.CostSoFar(r.id)
 	remaining := r.cfg.BudgetUSD - spent
@@ -582,7 +588,7 @@ func (r *run) review(ctx context.Context, round int) (string, error) {
 		return "", err
 	}
 	var rv review
-	if err := json.Unmarshal(res.Structured, &rv); err != nil {
+	if err := decodeAnswer(res, &rv); err != nil {
 		r.o.Store.SetTaskStatus(taskID, store.Failed, "review was not valid JSON")
 		return "", fmt.Errorf("reviewer did not return a valid review: %v", err)
 	}

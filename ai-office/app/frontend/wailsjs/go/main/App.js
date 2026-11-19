@@ -58,8 +58,16 @@ export function Ollama() {
   return window['go']['main']['App']['Ollama']();
 }
 
+export function OllamaProbes() {
+  return window['go']['main']['App']['OllamaProbes']();
+}
+
 export function PickFolder() {
   return window['go']['main']['App']['PickFolder']();
+}
+
+export function ProbeModel(arg1) {
+  return window['go']['main']['App']['ProbeModel'](arg1);
 }
 
 export function Projects() {

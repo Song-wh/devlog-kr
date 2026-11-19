@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -103,6 +106,32 @@ func (a *App) DeleteEmployee(id int64) error {
 
 // Ollama reports the local server and its installed models.
 func (a *App) Ollama() ollama.Status { return ollama.Check(context.Background()) }
+
+// OllamaProbes returns saved model tests (model -> result).
+func (a *App) OllamaProbes() map[string]ollama.ProbeResult {
+	out := map[string]ollama.ProbeResult{}
+	if a.ready() == nil {
+		if v, _ := a.st.Setting("ollama_probe"); v != "" {
+			json.Unmarshal([]byte(v), &out)
+		}
+	}
+	return out
+}
+
+// ProbeModel tests whether a local model can work as an employee (reads a
+// file through a tool call and answers in JSON) and saves the result.
+func (a *App) ProbeModel(model string) (ollama.ProbeResult, error) {
+	if err := a.ready(); err != nil {
+		return ollama.ProbeResult{}, err
+	}
+	profile := filepath.Join(a.dataDir, "profiles", "probe-"+strings.NewReplacer(":", "_", "/", "_").Replace(model))
+	r := ollama.Probe(context.Background(), model, profile, 6*time.Minute)
+	all := a.OllamaProbes()
+	all[model] = r
+	b, _ := json.Marshal(all)
+	a.st.SetSetting("ollama_probe", string(b))
+	return r, nil
+}
 
 // ollamaStatus shows a local-model employee in the same shape as an account.
 func ollamaStatus(s ollama.Status, model string) claudecode.AuthStatus {

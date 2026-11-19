@@ -97,7 +97,10 @@ func tally(fs []Finding, panelSize int) {
 				yes++
 			}
 		}
-		fs[i].Accepted = yes*2 > panelSize
+		// Majority of those who looked at it (author + voters). A finding
+		// nobody else checked is not confirmed.
+		n := 1 + len(fs[i].Votes)
+		fs[i].Accepted = len(fs[i].Votes) > 0 && yes*2 > n
 	}
 }
 
@@ -149,11 +152,11 @@ func (r *run) crossReview(ctx context.Context, panel []Agent, title, subject, fi
 	own := make([]findings, len(panel))
 	err = parallel(panel, func(i int, ag Agent) error {
 		res, err := r.runAgent(ctx, taskID, "qa", ag, model, subject, find+crossFindRule, findingsSchema, false)
-		if err != nil {
-			return fmt.Errorf("%s: %w", ag.Name, err)
+		if err == nil {
+			err = decodeAnswer(res, &own[i])
 		}
-		if err := json.Unmarshal(res.Structured, &own[i]); err != nil {
-			return fmt.Errorf("%s: findings were not valid JSON: %v", ag.Name, err)
+		if err != nil {
+			return r.skipMember(taskID, "cross-review", 1, ag, err)
 		}
 		say(ag, 1, "finding", fmt.Sprintf("%s (지적 %d개)", own[i].Summary, len(own[i].Issues)), own[i], res.Usage.CostUSD)
 		return nil
@@ -193,14 +196,14 @@ func (r *run) crossReview(ctx context.Context, panel []Agent, title, subject, fi
 			return nil
 		}
 		res, err := r.runAgent(ctx, taskID, "qa", ag, model, verifyPrompt(subject, theirs), find+crossVerifyRule, verdictsSchema, false)
-		if err != nil {
-			return fmt.Errorf("%s: %w", ag.Name, err)
-		}
 		var vs struct {
 			Verdicts []Verdict `json:"verdicts"`
 		}
-		if err := json.Unmarshal(res.Structured, &vs); err != nil {
-			return fmt.Errorf("%s: verdicts were not valid JSON: %v", ag.Name, err)
+		if err == nil {
+			err = decodeAnswer(res, &vs)
+		}
+		if err != nil {
+			return r.skipMember(taskID, "cross-review", 2, ag, err)
 		}
 		valid := 0
 		mu.Lock()

@@ -11,7 +11,6 @@ package orchestrator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -128,15 +127,17 @@ func (r *run) draftCritique(ctx context.Context, panel []Agent, title, subject, 
 
 	for round := 1; round <= r.rounds(); round++ {
 		cs := make([]critique, len(critics))
+		spoke := make([]bool, len(critics))
 		err = parallel(critics, func(i int, ag Agent) error {
 			res, err := r.runAgent(ctx, taskID, "pm", ag, model, critiquePrompt(subject, author.Name, draftText(draft)),
 				critiqueSystemPrompt(), critiqueSchema, false)
+			if err == nil {
+				err = decodeAnswer(res, &cs[i])
+			}
 			if err != nil {
-				return fmt.Errorf("%s: %w", ag.Name, err)
+				return r.skipMember(taskID, "draft-critique", round, ag, err)
 			}
-			if err := json.Unmarshal(res.Structured, &cs[i]); err != nil {
-				return fmt.Errorf("%s: critique was not valid JSON: %v", ag.Name, err)
-			}
+			spoke[i] = true
 			verdict := "수정 요청"
 			if cs[i].Approve {
 				verdict = "승인"
@@ -147,17 +148,27 @@ func (r *run) draftCritique(ctx context.Context, panel []Agent, title, subject, 
 		if err != nil {
 			return stopped(round, err)
 		}
-		approved := 0
-		for _, c := range cs {
+		approved, voters := 0, 0
+		var heard []Agent
+		var heardCs []critique
+		for i, c := range cs {
+			if !spoke[i] {
+				continue // skipped this round (bad answer, timeout)
+			}
+			voters++
+			heard, heardCs = append(heard, critics[i]), append(heardCs, c)
 			if c.Approve {
 				approved++
 			}
 		}
-		r.o.log("meeting", fmt.Sprintf("round %d: %d/%d approve", round, approved, len(critics)))
-		if approved == len(critics) {
+		r.o.log("meeting", fmt.Sprintf("round %d: %d/%d approve", round, approved, voters))
+		if voters == 0 {
+			return stopped(round, fmt.Errorf("이번 라운드에 제대로 답한 검토자가 없음"))
+		}
+		if approved == voters {
 			break
 		}
-		revised, err := r.runAgent(ctx, taskID, "pm", author, model, revisePrompt(subject, draftText(draft), critics, cs),
+		revised, err := r.runAgent(ctx, taskID, "pm", author, model, revisePrompt(subject, draftText(draft), heard, heardCs),
 			authorSystem+reviseRule, schema, false)
 		if err != nil {
 			return stopped(round, err)
@@ -187,12 +198,14 @@ func (r *run) discussion(ctx context.Context, panel []Agent, subject string) (st
 				prompt += "\n\n지금까지 다른 참석자들의 입장:\n" + othersPositions(panel, prev, i)
 			}
 			res, err := r.runAgent(ctx, taskID, "pm", ag, model, prompt, discussionSystemPrompt(round, ag.Name), positionSchema, false)
+			var p position
+			if err == nil {
+				err = decodeAnswer(res, &p)
+			}
 			if err != nil {
-				return fmt.Errorf("%s: %w", ag.Name, err)
+				return r.skipMember(taskID, "discussion", round, ag, err) // keeps last round's position
 			}
-			if err := json.Unmarshal(res.Structured, &latest[i]); err != nil {
-				return fmt.Errorf("%s: position was not valid JSON: %v", ag.Name, err)
-			}
+			latest[i] = p
 			kind := "opinion"
 			if round > 1 {
 				kind = "rebuttal"
