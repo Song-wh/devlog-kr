@@ -54,6 +54,7 @@ func (a *App) startup(ctx context.Context) {
 	if err := st.SeedEmployees(); err != nil {
 		a.initErr = err
 	}
+	a.migrateLastProject()
 }
 
 func (a *App) shutdown(ctx context.Context) {
@@ -80,32 +81,62 @@ func (a *App) ready() error {
 	return nil
 }
 
-// ---- project settings ----
+// ---- projects ----
 
-// Project is what the user registers once per repository.
-type Project struct {
-	Repo    string   `json:"repo"`
-	Checks  []string `json:"checks"`
-	Protect []string `json:"protect"`
+// Projects lists registered projects.
+func (a *App) Projects() ([]store.Project, error) {
+	if err := a.ready(); err != nil {
+		return nil, err
+	}
+	return a.st.Projects()
 }
 
-// LastProject returns the project used last time (empty if none).
-func (a *App) LastProject() (Project, error) {
-	var p Project
+// SaveProject registers or updates a project; its folder must be a git repository.
+func (a *App) SaveProject(p store.Project) (int64, error) {
 	if err := a.ready(); err != nil {
-		return p, err
+		return 0, err
 	}
-	v, err := a.st.Setting("last_project")
-	if err != nil || v == "" {
-		return p, err
+	top, err := workspace.TopLevel(p.Repo)
+	if err != nil {
+		return 0, fmt.Errorf("git 저장소가 아닙니다: %s", p.Repo)
 	}
-	err = json.Unmarshal([]byte(v), &p)
-	return p, err
+	p.Repo = top
+	return a.st.SaveProject(p)
+}
+
+// DeleteProject removes a project from the list (its folder is not touched).
+func (a *App) DeleteProject(id int64) error {
+	if err := a.ready(); err != nil {
+		return err
+	}
+	return a.st.DeleteProject(id)
+}
+
+// migrateLastProject turns the form values saved by earlier versions into
+// a registered project, once.
+func (a *App) migrateLastProject() {
+	ps, err := a.st.Projects()
+	if err != nil || len(ps) > 0 {
+		return
+	}
+	v, _ := a.st.Setting("last_project")
+	if v == "" {
+		return
+	}
+	var old struct {
+		Repo    string   `json:"repo"`
+		Checks  []string `json:"checks"`
+		Protect []string `json:"protect"`
+	}
+	if json.Unmarshal([]byte(v), &old) != nil || old.Repo == "" {
+		return
+	}
+	a.st.SaveProject(store.Project{Name: filepath.Base(old.Repo), Repo: old.Repo, Checks: old.Checks, Protect: old.Protect})
 }
 
 // PickFolder opens a folder dialog and returns the git repository root.
 func (a *App) PickFolder() (string, error) {
-	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "작업할 저장소 폴더"})
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "프로젝트 폴더"})
 	if err != nil || dir == "" {
 		return "", err
 	}
@@ -120,12 +151,31 @@ func (a *App) PickFolder() (string, error) {
 
 // StartInput is the new-request form.
 type StartInput struct {
-	Project   Project          `json:"project"`
+	ProjectID int64            `json:"projectId"`
 	Request   string           `json:"request"`
-	Mode      string           `json:"mode"` // solo / team / review
-	Team      map[string]int64 `json:"team"` // role (pm/dev/qa) -> employee id
+	Mode      string           `json:"mode"` // ask / plan / audit / solo / team / review
+	Team      map[string]int64 `json:"team"` // slot (ask/pm/dev/qa) -> employee id
 	BudgetUSD float64          `json:"budgetUsd"`
 	FixRounds int              `json:"fixRounds"`
+}
+
+// slotsFor lists who takes part in each mode.
+func slotsFor(mode string) ([]string, error) {
+	switch mode {
+	case orchestrator.ModeAsk:
+		return []string{"ask"}, nil
+	case orchestrator.ModePlan:
+		return []string{"pm"}, nil
+	case orchestrator.ModeAudit:
+		return []string{"qa"}, nil
+	case orchestrator.ModeSolo:
+		return []string{"dev"}, nil
+	case orchestrator.ModeTeam:
+		return []string{"pm", "dev"}, nil
+	case orchestrator.ModeReview:
+		return []string{"pm", "dev", "qa"}, nil
+	}
+	return nil, fmt.Errorf("알 수 없는 진행 방식: %s", mode)
 }
 
 // LogLine is pushed to the frontend as the "log" event.
@@ -145,24 +195,24 @@ func (a *App) Start(in StartInput) (string, error) {
 	if strings.TrimSpace(in.Request) == "" {
 		return "", errors.New("요청 내용을 적어 주세요")
 	}
-	top, err := workspace.TopLevel(in.Project.Repo)
+	proj, err := a.st.Project(in.ProjectID)
 	if err != nil {
-		return "", fmt.Errorf("git 저장소가 아닙니다: %s", in.Project.Repo)
+		return "", errors.New("프로젝트를 골라 주세요")
 	}
-	in.Project.Repo = top
-	in.Project.Checks = clean(in.Project.Checks)
-	in.Project.Protect = clean(in.Project.Protect)
-	if b, err := json.Marshal(in.Project); err == nil {
-		a.st.SetSetting("last_project", string(b))
+	top, err := workspace.TopLevel(proj.Repo)
+	if err != nil {
+		return "", fmt.Errorf("프로젝트 폴더가 git 저장소가 아닙니다: %s", proj.Repo)
+	}
+	a.st.SetSetting("last_project_id", fmt.Sprint(proj.ID))
+	slots, err := slotsFor(in.Mode)
+	if err != nil {
+		return "", err
 	}
 	agents := map[string]orchestrator.Agent{}
-	for _, role := range []string{"pm", "dev", "qa"} {
-		if in.Mode == "solo" && role != "dev" || in.Mode == "team" && role == "qa" {
-			continue
-		}
-		id, ok := in.Team[role]
+	for _, slot := range slots {
+		id, ok := in.Team[slot]
 		if !ok || id == 0 {
-			return "", fmt.Errorf("%s 역할을 맡을 직원을 골라 주세요", strings.ToUpper(role))
+			return "", errors.New("참여할 직원을 골라 주세요")
 		}
 		e, err := a.st.Employee(id)
 		if err != nil {
@@ -173,7 +223,7 @@ func (a *App) Start(in StartInput) (string, error) {
 				return "", fmt.Errorf("%s 직원이 로그인되어 있지 않습니다. 직원 화면에서 로그인하세요", e.Name)
 			}
 		}
-		agents[role] = a.agentFor(e)
+		agents[slot] = a.agentFor(e)
 	}
 	if in.BudgetUSD <= 0 {
 		in.BudgetUSD = 2
@@ -195,10 +245,10 @@ func (a *App) Start(in StartInput) (string, error) {
 		},
 	}
 	cfg := orchestrator.Config{
-		ID: id, Repo: top, Request: in.Request, Checks: in.Project.Checks, Protect: in.Project.Protect,
+		ID: id, Repo: top, Request: in.Request, Checks: proj.Checks, Protect: proj.Protect,
 		PMModel: "sonnet", DevModel: "sonnet", Agents: agents, MaxFixRounds: in.FixRounds, BudgetUSD: in.BudgetUSD,
 		TaskTimeout: 15 * time.Minute, CheckTimeout: 5 * time.Minute,
-		Solo: in.Mode == "solo", Review: in.Mode == "review",
+		Mode: in.Mode, ProjectID: proj.ID, ProjectNotes: proj.Notes,
 	}
 	// Create the worktree and the database row now, so the request exists
 	// (and setup errors reach the form) before this call returns.
@@ -268,7 +318,22 @@ type Detail struct {
 	Checks  []store.CheckRow `json:"checks"`
 	Report  string           `json:"report"`
 	Diff    string           `json:"diff"`
+	Answer  string           `json:"answer"` // read-only modes: the answer / plan / review
 }
+
+// LastProjectID is the project used last time (0 if none).
+func (a *App) LastProjectID() int64 {
+	if a.ready() != nil {
+		return 0
+	}
+	v, _ := a.st.Setting("last_project_id")
+	var id int64
+	fmt.Sscan(v, &id)
+	return id
+}
+
+// readOnly reports whether a request never had its own branch.
+func readOnly(r store.RequestRow) bool { return orchestrator.ReadOnly(r.Mode) || r.Branch == "" }
 
 const maxDiff = 200000
 
@@ -288,6 +353,15 @@ func (a *App) Detail(id string) (*Detail, error) {
 		return nil, err
 	}
 	diffStat := ""
+	if readOnly(r) {
+		for _, t := range d.Tasks {
+			if t.Kind == "answer" {
+				d.Answer = t.Result
+			}
+		}
+		d.Report, _ = report.Markdown(a.st.DB(), id, "")
+		return d, nil
+	}
 	switch r.Status {
 	case store.ReqDone, store.ReqApproved:
 		d.Diff, _ = workspace.DiffBranch(r.Repo, r.Base, r.Branch)
@@ -314,6 +388,9 @@ func (a *App) Approve(id string) error {
 	if err != nil {
 		return err
 	}
+	if readOnly(r) {
+		return errors.New("읽기만 한 요청이라 반영할 변경이 없습니다")
+	}
 	if r.Status != store.ReqDone {
 		return fmt.Errorf("검증을 통과한 요청만 반영할 수 있습니다 (현재 %s)", r.Status)
 	}
@@ -338,6 +415,10 @@ func (a *App) Discard(id string) error {
 	r, err := a.st.GetRequest(id)
 	if err != nil {
 		return err
+	}
+	if readOnly(r) {
+		// Never remove anything: the "worktree" of a read-only request is the project folder itself.
+		return a.st.SetRequestStatus(id, store.ReqDiscarded, "")
 	}
 	if r.Status == store.ReqApproved || r.Status == store.ReqDiscarded {
 		return fmt.Errorf("이미 %s 상태입니다", r.Status)

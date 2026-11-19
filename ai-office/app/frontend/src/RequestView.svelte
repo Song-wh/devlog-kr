@@ -10,7 +10,9 @@
   let d = $state<main.Detail | null>(null)
   let error = $state('')
   let busy = $state(false)
-  let tab = $state<'log' | 'diff' | 'report'>('log')
+  let tab = $state<'answer' | 'log' | 'diff' | 'report'>('log')
+  let readOnly = $derived(['ask', 'plan', 'audit'].includes(d?.request.mode ?? ''))
+  let shownAnswer = false
 
   async function load() {
     try {
@@ -18,6 +20,10 @@
       x.tasks ??= []
       x.checks ??= []
       d = x
+      if (x.answer && !shownAnswer) {
+        tab = 'answer' // jump to the answer once it arrives
+        shownAnswer = true
+      }
       error = ''
     } catch (e) {
       error = String(e)
@@ -45,8 +51,8 @@
     }
   }
 
-  const roleColor: Record<string, string> = { pm: 'var(--blue)', dev: 'var(--accent)', qa: 'var(--green)', system: 'var(--muted)' }
-  const kindName: Record<string, string> = { plan: '계획', work: '작업', fix: '수정', review: 'QA 리뷰' }
+  const roleColor: Record<string, string> = { pm: 'var(--blue)', dev: 'var(--accent)', qa: 'var(--green)', ask: 'var(--blue)', system: 'var(--muted)' }
+  const kindName: Record<string, string> = { plan: '계획', work: '작업', fix: '수정', review: 'QA 리뷰', answer: '답변' }
   const diffClass = (l: string) =>
     l.startsWith('+++') || l.startsWith('---') ? 'dh' : l.startsWith('+') ? 'da' : l.startsWith('-') ? 'dd' : l.startsWith('@@') ? 'dh' : ''
 </script>
@@ -56,11 +62,13 @@
   <div class="head">
     <div>
       <span class="status s-{isRunning ? 'RUNNING' : r.status}">{isRunning ? 'RUNNING' : r.status}</span>
-      <span class="mono muted">{r.id} · {r.branch}</span>
+      <span class="mono muted">{r.id}{r.branch ? ' · ' + r.branch : ''}{r.project ? ' · ' + r.project : ''}</span>
     </div>
     <div class="buttons">
       {#if isRunning}
         <button class="danger" disabled={busy} onclick={() => act(async (x) => Stop(x), '실행을 중지할까요? 실행 중인 AI 프로세스가 모두 종료됩니다.')}>중지</button>
+      {:else if readOnly}
+        <button onclick={() => navigator.clipboard.writeText(d?.answer ?? '')} disabled={!d.answer}>답변 복사</button>
       {:else if r.status === 'DONE'}
         <button class="ok" disabled={busy} onclick={() => act(Approve, `이 변경을 원래 저장소에 반영(merge)할까요?\n${r.repo}`)}>승인하고 반영</button>
         <button disabled={busy} onclick={() => act(Discard, '작업 폴더와 브랜치를 지울까요?')}>폐기</button>
@@ -76,8 +84,8 @@
   <div class="stats">
     <div><span>비용</span><b>${r.costUsd.toFixed(4)}</b></div>
     <div><span>AI 실행</span><b>{r.runs}회</b></div>
-    <div><span>검사</span><b>{d.checks.filter((c) => c.exitCode === 0 && !c.timedOut).length}/{d.checks.length} 통과</b></div>
-    <div><span>수정</span><b>{d.tasks.filter((t) => t.kind === 'fix').length}회</b></div>
+    {#if !readOnly}<div><span>검사</span><b>{d.checks.filter((c) => c.exitCode === 0 && !c.timedOut).length}/{d.checks.length} 통과</b></div>
+    <div><span>수정</span><b>{d.tasks.filter((t) => t.kind === 'fix').length}회</b></div>{/if}
   </div>
 
   <table>
@@ -98,12 +106,15 @@
   </table>
 
   <div class="tabs">
+    {#if readOnly}<button class:on={tab === 'answer'} onclick={() => (tab = 'answer')}>{r.mode === 'plan' ? '기획서' : r.mode === 'audit' ? '검토 결과' : '답변'}</button>{/if}
     <button class:on={tab === 'log'} onclick={() => (tab = 'log')}>진행 기록</button>
-    <button class:on={tab === 'diff'} onclick={() => (tab = 'diff')}>변경 내용</button>
+    {#if !readOnly}<button class:on={tab === 'diff'} onclick={() => (tab = 'diff')}>변경 내용</button>{/if}
     <button class:on={tab === 'report'} onclick={() => (tab = 'report')}>보고서</button>
   </div>
   <div class="box">
-    {#if tab === 'log'}
+    {#if tab === 'answer'}
+      {#if d.answer}<div class="answer">{d.answer}</div>{:else}<p class="muted">아직 답변이 없습니다.</p>{/if}
+    {:else if tab === 'log'}
       {#if live.length === 0}
         <p class="muted">실시간 기록은 이 창에서 시작한 요청에만 보입니다. 지난 요청은 표와 보고서를 보세요.</p>
       {/if}
@@ -149,4 +160,5 @@
   .dd { color: var(--red); }
   .dh { color: var(--blue); }
   .err { color: var(--red); }
+  .answer { white-space: pre-wrap; line-height: 1.65; font-size: 14px; }
 </style>

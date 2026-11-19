@@ -9,13 +9,15 @@ export function CancelLogin(arg1:number):Promise<void>;
 
 export function DeleteEmployee(arg1:number):Promise<void>;
 
+export function DeleteProject(arg1:number):Promise<void>;
+
 export function Detail(arg1:string):Promise<main.Detail>;
 
 export function Discard(arg1:string):Promise<void>;
 
 export function Employees():Promise<Array<main.EmployeeView>>;
 
-export function LastProject():Promise<main.Project>;
+export function LastProjectID():Promise<number>;
 
 export function List():Promise<Array<store.RequestRow>>;
 
@@ -29,9 +31,13 @@ export function Models():Promise<Array<string>>;
 
 export function PickFolder():Promise<string>;
 
+export function Projects():Promise<Array<store.Project>>;
+
 export function Running():Promise<Array<string>>;
 
 export function SaveEmployee(arg1:store.Employee):Promise<number>;
+
+export function SaveProject(arg1:store.Project):Promise<number>;
 
 export function Start(arg1:main.StartInput):Promise<string>;
 

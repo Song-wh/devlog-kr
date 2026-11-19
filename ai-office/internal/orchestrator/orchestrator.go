@@ -39,6 +39,39 @@ type Config struct {
 	// Agents assigns an employee to a role ("pm", "dev", "qa"). Its model
 	// and account override the fields above; missing roles use them as is.
 	Agents map[string]Agent `json:"agents,omitempty"`
+	// Mode: ask / plan / audit (read-only, no branch) or solo / team / review.
+	// Empty = derived from Solo and Review.
+	Mode string `json:"mode,omitempty"`
+	// ProjectID and ProjectNotes come from the registered project; the notes
+	// (stack, rules, background) are added to every employee's instructions.
+	ProjectID    int64  `json:"project_id,omitempty"`
+	ProjectNotes string `json:"project_notes,omitempty"`
+}
+
+// Modes.
+const (
+	ModeAsk    = "ask"    // answer a question about the project
+	ModePlan   = "plan"   // PM writes a plan / spec, no code
+	ModeAudit  = "audit"  // QA reviews the current code, no changes
+	ModeSolo   = "solo"   // developer alone
+	ModeTeam   = "team"   // PM + developer + checks
+	ModeReview = "review" // team + QA reviewer
+)
+
+// ReadOnly reports whether a mode only reads the project (no worktree, no branch).
+func ReadOnly(mode string) bool { return mode == ModeAsk || mode == ModePlan || mode == ModeAudit }
+
+func (c *Config) mode() string {
+	if c.Mode != "" {
+		return c.Mode
+	}
+	switch {
+	case c.Solo:
+		return ModeSolo
+	case c.Review:
+		return ModeReview
+	}
+	return ModeTeam
 }
 
 // Agent is the employee doing a role: which account, which model, and any
@@ -118,7 +151,18 @@ func (o *Orchestrator) Prepare(cfg Config) (*Prepared, error) {
 	if id == "" {
 		id = NewID()
 	}
-	wt, err := workspace.Create(cfg.Repo, filepath.Join(o.DataDir, "worktrees"), id)
+	cfg.Mode = cfg.mode()
+	cfg.Solo = cfg.Mode == ModeSolo
+	cfg.Review = cfg.Mode == ModeReview
+	var wt *workspace.Worktree
+	var err error
+	if ReadOnly(cfg.Mode) {
+		// Agents only read: they work in the project folder itself (current
+		// files, uncommitted changes included) and no branch is made.
+		wt, err = workspace.ReadOnly(cfg.Repo)
+	} else {
+		wt, err = workspace.Create(cfg.Repo, filepath.Join(o.DataDir, "worktrees"), id)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +172,7 @@ func (o *Orchestrator) Prepare(cfg Config) (*Prepared, error) {
 	}
 	cj, _ := json.Marshal(cfg)
 	if err := o.Store.CreateRequest(store.Request{ID: id, Text: cfg.Request, Repo: wt.Repo, Worktree: wt.Dir,
-		Branch: wt.Branch, Base: wt.Base, ConfigJSON: string(cj)}); err != nil {
+		Branch: wt.Branch, Base: wt.Base, ConfigJSON: string(cj), Mode: cfg.Mode, ProjectID: cfg.ProjectID}); err != nil {
 		return nil, err
 	}
 	return &Prepared{r: r}, nil
@@ -137,13 +181,22 @@ func (o *Orchestrator) Prepare(cfg Config) (*Prepared, error) {
 // Execute runs a prepared request to the end.
 func (p *Prepared) Execute(ctx context.Context) (*Outcome, error) {
 	r, o, id, wt := p.r, p.r.o, p.r.id, p.r.wt
-	o.log("system", fmt.Sprintf("request %s  worktree %s  branch %s", id, wt.Dir, wt.Branch))
+	if ReadOnly(r.cfg.Mode) {
+		o.log("system", fmt.Sprintf("request %s  %s (read only)  %s", id, r.cfg.Mode, wt.Dir))
+	} else {
+		o.log("system", fmt.Sprintf("request %s  worktree %s  branch %s", id, wt.Dir, wt.Branch))
+	}
 
-	status, reason := r.execute(ctx)
+	var status, reason string
+	if ReadOnly(r.cfg.Mode) {
+		status, reason = r.answer(ctx)
+	} else {
+		status, reason = r.execute(ctx)
+	}
 	if ctx.Err() != nil {
 		status, reason = store.ReqCancelled, "stopped by user"
 	}
-	if status == store.ReqDone {
+	if status == store.ReqDone && !ReadOnly(r.cfg.Mode) {
 		if err := r.commit(); err != nil {
 			status, reason = store.ReqFailed, "commit: "+err.Error()
 		}
@@ -258,6 +311,9 @@ func (r *run) runTask(ctx context.Context, taskID int64, role, model, prompt, sy
 	if ag.Model != "" {
 		model = ag.Model
 	}
+	if notes := strings.TrimSpace(r.cfg.ProjectNotes); notes != "" {
+		system += "\n\n프로젝트 설명(사용자가 등록한 배경·규칙, 반드시 따른다):\n" + notes
+	}
 	if ag.Prompt != "" {
 		system += "\n\n이 직원에게만 주는 추가 지시:\n" + ag.Prompt
 	}
@@ -274,8 +330,8 @@ func (r *run) runTask(ctx context.Context, taskID int64, role, model, prompt, sy
 		Timeout: r.cfg.TaskTimeout, LogDir: logDir, SystemPrompt: system, JSONSchema: schema,
 		ProfileDir: ag.ProfileDir,
 	}
-	if role == "pm" || role == "qa" {
-		spec.Tools = []string{"Read", "Glob", "Grep"} // planners and reviewers only read
+	if role != "dev" || ReadOnly(r.cfg.Mode) {
+		spec.Tools = []string{"Read", "Glob", "Grep"} // planners, reviewers and read-only modes only read
 	}
 	start := time.Now()
 	res, runErr := r.o.Engine.Run(ctx, spec, func(ev engine.Event) {
@@ -353,6 +409,36 @@ func (r *run) verify(ctx context.Context, round int) (string, error) {
 		r.o.log("qa", fmt.Sprintf("check %s (%.1fs): %s", state, res.Duration.Seconds(), cmd))
 	}
 	return strings.Join(fails, "\n\n"), nil
+}
+
+// answer runs a read-only mode: one employee reads the project and writes
+// an answer, a plan or a review. Nothing in the project changes.
+func (r *run) answer(ctx context.Context) (string, string) {
+	role, title, system := "", "", ""
+	switch r.cfg.Mode {
+	case ModeAsk:
+		role, title, system = "ask", "질문 답변", askSystemPrompt()
+	case ModePlan:
+		role, title, system = "pm", "기획", planDocSystemPrompt()
+	case ModeAudit:
+		role, title, system = "qa", "코드 검토", auditSystemPrompt()
+	}
+	model := r.cfg.DevModel
+	if role == "pm" && r.cfg.PMModel != "" {
+		model = r.cfg.PMModel
+	}
+	taskID, err := r.o.Store.AddTask(r.id, 1, "answer", role, title, r.cfg.Request)
+	if err != nil {
+		return store.ReqFailed, err.Error()
+	}
+	res, err := r.runTask(ctx, taskID, role, model, "사용자 요청:\n"+r.cfg.Request, system, "")
+	if err != nil {
+		return store.ReqFailed, err.Error()
+	}
+	r.o.Store.SetTaskStatus(taskID, store.Completed, "")
+	os.WriteFile(filepath.Join(r.dir, "answer.md"), []byte(res.Text), 0o644)
+	r.o.log(role, fmt.Sprintf("answer written (%d chars)", len([]rune(res.Text))))
+	return store.ReqDone, ""
 }
 
 // maxReviewDiff caps the diff sent to the reviewer; it can read files itself.

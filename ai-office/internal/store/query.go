@@ -28,15 +28,19 @@ type RequestRow struct {
 	Finished  string  `json:"finishedAt"`
 	CostUSD   float64 `json:"costUsd"`
 	Runs      int     `json:"runs"`
+	Mode      string  `json:"mode"`
+	ProjectID int64   `json:"projectId"`
+	Project   string  `json:"project"` // project name ("" if none)
 }
 
 const requestCols = `r.id, r.text, r.repo, r.worktree, r.branch, r.base, r.status, r.reason, r.plan_summary, r.config_json,
-	r.created_at, COALESCE(r.finished_at,''), COALESCE(SUM(u.cost_usd),0), COUNT(u.id)`
+	r.created_at, COALESCE(r.finished_at,''), COALESCE(SUM(u.cost_usd),0), COUNT(u.id),
+	r.mode, r.project_id, COALESCE((SELECT name FROM projects p WHERE p.id = r.project_id),'')`
 
 func scanRequest(sc interface{ Scan(...any) error }) (RequestRow, error) {
 	var r RequestRow
 	err := sc.Scan(&r.ID, &r.Text, &r.Repo, &r.Worktree, &r.Branch, &r.Base, &r.Status, &r.Reason, &r.Plan, &r.Config,
-		&r.CreatedAt, &r.Finished, &r.CostUSD, &r.Runs)
+		&r.CreatedAt, &r.Finished, &r.CostUSD, &r.Runs, &r.Mode, &r.ProjectID, &r.Project)
 	return r, err
 }
 

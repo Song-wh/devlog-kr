@@ -225,3 +225,37 @@ func TestAgentsOverrideRole(t *testing.T) {
 		t.Errorf("run agent = %q", agent)
 	}
 }
+
+// Read-only modes work in the project folder itself, make no branch, only
+// get read tools, and see the project notes.
+func TestReadOnlyModeMakesNoBranch(t *testing.T) {
+	repo := newRepo(t)
+	data := t.TempDir()
+	st, _ := store.Open(filepath.Join(data, "aio.db"))
+	defer st.Close()
+	fe := &fakeEngine{t: t, dev: []func(string){func(string) {}}}
+	o := &Orchestrator{Engine: fe, Store: st, DataDir: data}
+	out, err := o.Run(context.Background(), Config{Repo: repo, Request: "구조를 설명해줘", Mode: ModeAsk,
+		ProjectNotes: "Go 1.22, 테스트는 표 방식으로"})
+	if err != nil || out.Status != store.ReqDone {
+		t.Fatalf("%v %+v", err, out)
+	}
+	c := fe.calls[0]
+	if len(fe.calls) != 1 || strings.Join(c.Tools, ",") != "Read,Glob,Grep" || !strings.Contains(c.SystemPrompt, "테스트는 표 방식으로") {
+		t.Errorf("calls %d tools %v", len(fe.calls), c.Tools)
+	}
+	if got, _ := filepath.Abs(c.Dir); !strings.EqualFold(filepath.Clean(got), filepath.Clean(out.Worktree.Repo)) {
+		t.Errorf("ran in %s, want the project folder %s", c.Dir, out.Worktree.Repo)
+	}
+	branches, _ := exec.Command("git", "-C", repo, "branch", "--list").Output()
+	if n := len(strings.Fields(strings.ReplaceAll(string(branches), "*", ""))); n != 1 {
+		t.Errorf("branches: %q", branches)
+	}
+	if b, err := os.ReadFile(filepath.Join(out.Dir, "answer.md")); err != nil || string(b) != "did it" {
+		t.Errorf("answer.md %q %v", b, err)
+	}
+	r, _ := st.GetRequest(out.RequestID)
+	if r.Mode != ModeAsk || r.Branch != "" {
+		t.Errorf("request mode %q branch %q", r.Mode, r.Branch)
+	}
+}

@@ -14,6 +14,10 @@ export function DeleteEmployee(arg1) {
   return window['go']['main']['App']['DeleteEmployee'](arg1);
 }
 
+export function DeleteProject(arg1) {
+  return window['go']['main']['App']['DeleteProject'](arg1);
+}
+
 export function Detail(arg1) {
   return window['go']['main']['App']['Detail'](arg1);
 }
@@ -26,8 +30,8 @@ export function Employees() {
   return window['go']['main']['App']['Employees']();
 }
 
-export function LastProject() {
-  return window['go']['main']['App']['LastProject']();
+export function LastProjectID() {
+  return window['go']['main']['App']['LastProjectID']();
 }
 
 export function List() {
@@ -54,12 +58,20 @@ export function PickFolder() {
   return window['go']['main']['App']['PickFolder']();
 }
 
+export function Projects() {
+  return window['go']['main']['App']['Projects']();
+}
+
 export function Running() {
   return window['go']['main']['App']['Running']();
 }
 
 export function SaveEmployee(arg1) {
   return window['go']['main']['App']['SaveEmployee'](arg1);
+}
+
+export function SaveProject(arg1) {
+  return window['go']['main']['App']['SaveProject'](arg1);
 }
 
 export function Start(arg1) {

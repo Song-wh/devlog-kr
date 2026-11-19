@@ -33,6 +33,7 @@ export namespace main {
 	    checks: store.CheckRow[];
 	    report: string;
 	    diff: string;
+	    answer: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Detail(source);
@@ -45,6 +46,7 @@ export namespace main {
 	        this.checks = this.convertValues(source["checks"], store.CheckRow);
 	        this.report = source["report"];
 	        this.diff = source["diff"];
+	        this.answer = source["answer"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -113,24 +115,8 @@ export namespace main {
 		    return a;
 		}
 	}
-	export class Project {
-	    repo: string;
-	    checks: string[];
-	    protect: string[];
-	
-	    static createFrom(source: any = {}) {
-	        return new Project(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.repo = source["repo"];
-	        this.checks = source["checks"];
-	        this.protect = source["protect"];
-	    }
-	}
 	export class StartInput {
-	    project: Project;
+	    projectId: number;
 	    request: string;
 	    mode: string;
 	    team: Record<string, number>;
@@ -143,31 +129,13 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.project = this.convertValues(source["project"], Project);
+	        this.projectId = source["projectId"];
 	        this.request = source["request"];
 	        this.mode = source["mode"];
 	        this.team = source["team"];
 	        this.budgetUsd = source["budgetUsd"];
 	        this.fixRounds = source["fixRounds"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 
 }
@@ -224,6 +192,30 @@ export namespace store {
 	        this.createdAt = source["createdAt"];
 	    }
 	}
+	export class Project {
+	    id: number;
+	    name: string;
+	    repo: string;
+	    checks: string[];
+	    protect: string[];
+	    notes: string;
+	    createdAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Project(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.repo = source["repo"];
+	        this.checks = source["checks"];
+	        this.protect = source["protect"];
+	        this.notes = source["notes"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
 	export class RequestRow {
 	    id: string;
 	    text: string;
@@ -239,6 +231,9 @@ export namespace store {
 	    finishedAt: string;
 	    costUsd: number;
 	    runs: number;
+	    mode: string;
+	    projectId: number;
+	    project: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestRow(source);
@@ -260,6 +255,9 @@ export namespace store {
 	        this.finishedAt = source["finishedAt"];
 	        this.costUsd = source["costUsd"];
 	        this.runs = source["runs"];
+	        this.mode = source["mode"];
+	        this.projectId = source["projectId"];
+	        this.project = source["project"];
 	    }
 	}
 	export class TaskRow {

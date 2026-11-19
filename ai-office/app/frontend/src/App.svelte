@@ -6,6 +6,7 @@
   import NewRequest from './NewRequest.svelte'
   import RequestView from './RequestView.svelte'
   import Employees from './Employees.svelte'
+  import Projects from './Projects.svelte'
 
   type Log = { id: string; t: number; role: string; line: string }
 
@@ -48,6 +49,7 @@
   }
 
   const cost = (c: number) => '$' + c.toFixed(3)
+  const modeName: Record<string, string> = { ask: '질문', plan: '기획', audit: '검토', solo: '혼자 개발', team: '팀', review: '팀 + QA' }
   const short = (s: string) => (s.length > 60 ? s.slice(0, 60) + '…' : s)
 </script>
 
@@ -55,7 +57,10 @@
   <aside>
     <div class="brand">AI Office</div>
     <button class="primary new" onclick={() => (selected = null)}>+ 새 요청</button>
-    <button class="nav" class:active={selected === 'employees'} onclick={() => (selected = 'employees')}>직원 관리</button>
+    <div class="navs">
+      <button class="nav" class:active={selected === 'projects'} onclick={() => (selected = 'projects')}>프로젝트</button>
+      <button class="nav" class:active={selected === 'employees'} onclick={() => (selected = 'employees')}>직원</button>
+    </div>
     <div class="list">
       {#each requests as r (r.id)}
         <button class="item" class:active={selected === r.id} onclick={() => (selected = r.id)}>
@@ -64,6 +69,7 @@
             <span class="cost">{cost(r.costUsd)}</span>
           </div>
           <div class="text">{short(r.text)}</div>
+          <div class="when">{modeName[r.mode] ?? ''}{r.project ? ' · ' + r.project : ''}</div>
           <div class="when">{r.id}</div>
         </button>
       {:else}
@@ -75,9 +81,11 @@
   <main>
     {#if error}<div class="err">{error}</div>{/if}
     {#if selected === null}
-      <NewRequest onstarted={started} onemployees={() => (selected = 'employees')} />
+      <NewRequest onstarted={started} onemployees={() => (selected = 'employees')} onprojects={() => (selected = 'projects')} />
     {:else if selected === 'employees'}
       <Employees />
+    {:else if selected === 'projects'}
+      <Projects />
     {:else}
       {#key selected}
         <RequestView id={selected} live={logs[selected] ?? []} isRunning={running.includes(selected)} {tick} onchanged={refresh} />
@@ -91,7 +99,8 @@
   aside { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
   .brand { font-weight: 700; font-size: 18px; padding: 18px 16px 10px; color: var(--accent); }
   .new { margin: 0 12px 8px; }
-  .nav { margin: 0 12px 12px; background: transparent; }
+  .navs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0 12px 12px; }
+  .nav { background: transparent; }
   .nav.active { border-color: var(--accent); }
   .list { overflow-y: auto; flex: 1; padding: 0 8px 12px; }
   .item { display: block; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; margin-bottom: 4px; padding: 9px 10px; }

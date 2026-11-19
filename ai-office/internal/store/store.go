@@ -156,13 +156,15 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + employeeSchema); err != nil {
+	if _, err := db.Exec(schema + employeeSchema + projectSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
 	}
 	// Columns added after the first release; "duplicate column" means done.
 	for _, m := range []string{
 		`ALTER TABLE runs ADD COLUMN agent TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE requests ADD COLUMN mode TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE requests ADD COLUMN project_id INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := db.Exec(m); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()
@@ -222,11 +224,13 @@ func (s *Store) MarkInterrupted() (int64, error) {
 // Request is a new request row.
 type Request struct {
 	ID, Text, Repo, Worktree, Branch, Base, ConfigJSON string
+	Mode                                               string
+	ProjectID                                          int64
 }
 
 func (s *Store) CreateRequest(r Request) error {
-	_, err := s.db.Exec(`INSERT INTO requests(id, text, repo, worktree, branch, base, status, config_json, created_at)
-		VALUES (?,?,?,?,?,?,?,?,?)`, r.ID, r.Text, r.Repo, r.Worktree, r.Branch, r.Base, ReqRunning, r.ConfigJSON, now())
+	_, err := s.db.Exec(`INSERT INTO requests(id, text, repo, worktree, branch, base, status, config_json, created_at, mode, project_id)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.Text, r.Repo, r.Worktree, r.Branch, r.Base, ReqRunning, r.ConfigJSON, now(), r.Mode, r.ProjectID)
 	return err
 }
 

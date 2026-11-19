@@ -71,6 +71,17 @@ func Create(repo, root, id string) (*Worktree, error) {
 	return w, nil
 }
 
+// ReadOnly describes the project folder itself for modes that only read:
+// no worktree and no branch, Dir is the repository root.
+func ReadOnly(repo string) (*Worktree, error) {
+	top, err := TopLevel(repo)
+	if err != nil {
+		return nil, err
+	}
+	base, _ := git(top, "rev-parse", "HEAD")
+	return &Worktree{Repo: top, Dir: top, Base: strings.TrimSpace(base)}, nil
+}
+
 // Status lists changed and untracked files in dir.
 func Status(dir string) ([]Change, error) {
 	out, err := git(dir, "status", "--porcelain=v1", "-z", "--untracked-files=all")

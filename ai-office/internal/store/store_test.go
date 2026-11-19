@@ -87,3 +87,23 @@ func TestEmployees(t *testing.T) {
 		t.Error("deleted employee still visible")
 	}
 }
+
+func TestProjects(t *testing.T) {
+	s, _ := Open(filepath.Join(t.TempDir(), "aio.db"))
+	defer s.Close()
+	id, err := s.SaveProject(Project{Name: " 가계부 ", Repo: "C:/r", Checks: []string{"go test ./...", " "}, Protect: []string{"*_test.go"}, Notes: "Go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := s.Project(id)
+	if p.Name != "가계부" || len(p.Checks) != 1 || p.Protect[0] != "*_test.go" || p.Notes != "Go" {
+		t.Errorf("%+v", p)
+	}
+	if _, err := s.SaveProject(Project{Name: "x"}); err == nil {
+		t.Error("project without folder accepted")
+	}
+	s.DeleteProject(id)
+	if ps, _ := s.Projects(); len(ps) != 0 {
+		t.Errorf("deleted project listed: %+v", ps)
+	}
+}
