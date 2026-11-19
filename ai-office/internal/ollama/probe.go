@@ -32,6 +32,15 @@ const secret = "귤나무-4821"
 // Probe runs the test in a temporary folder. profileDir is an empty Claude
 // Code profile used for local runs.
 func Probe(ctx context.Context, model, profileDir string, timeout time.Duration) ProbeResult {
+	return probe(ctx, model, profileDir, timeout, &Engine{})
+}
+
+// ProbeClaudeCode runs the same test inside Claude Code (for comparison).
+func ProbeClaudeCode(ctx context.Context, model, profileDir string, timeout time.Duration) ProbeResult {
+	return probe(ctx, model, profileDir, timeout, &claudecode.Engine{})
+}
+
+func probe(ctx context.Context, model, profileDir string, timeout time.Duration, eng engine.Engine) ProbeResult {
 	GPU.Lock()
 	defer GPU.Unlock()
 	res := ProbeResult{Model: model, At: time.Now().Format(time.RFC3339)}
@@ -44,7 +53,6 @@ func Probe(ctx context.Context, model, profileDir string, timeout time.Duration)
 	os.WriteFile(filepath.Join(dir, "note.txt"), []byte("이 파일의 비밀 단어: "+secret+"\n"), 0o644)
 	os.MkdirAll(profileDir, 0o755)
 
-	eng := &claudecode.Engine{}
 	out, err := eng.Run(ctx, engine.Spec{
 		Prompt:     "note.txt 파일을 Read 도구로 읽고, 그 안의 비밀 단어를 word에 넣어 답해.",
 		Dir:        dir,

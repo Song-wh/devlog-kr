@@ -143,11 +143,14 @@ func panels(spec string) map[string][]orchestrator.Agent {
 			model = "sonnet"
 		}
 		ag := orchestrator.Agent{Name: name, Model: model}
-		// "Name:model@ollama" = a model served by Ollama on this PC.
-		if m, ok := strings.CutSuffix(model, "@ollama"); ok {
+		// "Name:model@ollama" = a model served by Ollama on this PC, on the light
+		// local engine; "@ollama-cc" runs it inside Claude Code instead.
+		cc := strings.HasSuffix(model, "@ollama-cc")
+		if m, ok := strings.CutSuffix(strings.TrimSuffix(model, "-cc"), "@ollama"); ok {
 			ag.Model = m
 			ag.Env = ollama.Env(m)
 			ag.Local = true
+			ag.Native = !cc
 			ag.ProfileDir = filepath.Join(defaultDataDir(), "profiles", "ollama-"+strings.NewReplacer(":", "_", "/", "_").Replace(m))
 		}
 		p = append(p, ag)

@@ -92,8 +92,9 @@ type Agent struct {
 	Model      string   `json:"model"`
 	ProfileDir string   `json:"-"` // engine account folder; empty = default login
 	Prompt     string   `json:"prompt,omitempty"`
-	Env        []string `json:"-"`               // extra engine environment (local model server)
-	Local      bool     `json:"local,omitempty"` // runs on this PC (no cost)
+	Env        []string `json:"-"`                // extra engine environment (local model server)
+	Local      bool     `json:"local,omitempty"`  // runs on this PC (no cost)
+	Native     bool     `json:"native,omitempty"` // use the light local engine instead of Claude Code
 }
 
 // NewID returns a request id: local time to the millisecond, usable in a
@@ -389,7 +390,11 @@ func (r *run) runAgent(ctx context.Context, taskID int64, role string, ag Agent,
 		r.o.log(speaker, "speaking")
 	}
 	start := time.Now()
-	res, runErr := r.o.Engine.Run(ctx, spec, func(ev engine.Event) {
+	eng := r.o.Engine
+	if ag.Native {
+		eng = &ollama.Engine{}
+	}
+	res, runErr := eng.Run(ctx, spec, func(ev engine.Event) {
 		switch ev.Kind {
 		case engine.EventToolUse:
 			r.o.log(speaker, fmt.Sprintf("%-6s %s", ev.Tool, rel(r.wt.Dir, ev.Target)))
@@ -403,7 +408,7 @@ func (r *run) runAgent(ctx context.Context, taskID int64, role string, ag Agent,
 		res.Usage.CostUSD, res.Usage.CostEstimated = 0, false
 	}
 	st.AddRun(store.Run{
-		RequestID: r.id, TaskID: taskID, Role: role, Engine: r.o.Engine.Name(), Model: model, Status: string(res.Status),
+		RequestID: r.id, TaskID: taskID, Role: role, Engine: eng.Name(), Model: model, Status: string(res.Status),
 		Turns: res.Turns, ToolCalls: res.ToolCalls, ToolErrors: res.ToolErrors, Denials: res.Denials,
 		InputTokens: res.Usage.InputTokens, OutputTokens: res.Usage.OutputTokens,
 		CacheRead: res.Usage.CacheReadTokens, CacheWrite: res.Usage.CacheCreateTokens,

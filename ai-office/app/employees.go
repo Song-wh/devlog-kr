@@ -44,6 +44,7 @@ func (a *App) agentFor(e store.Employee) orchestrator.Agent {
 		ag.ProfileDir = a.profileDir(e.ID)
 		ag.Env = ollama.Env(e.Model)
 		ag.Local = true
+		ag.Native = true // light engine: small models cope with it (bug 014)
 	}
 	return ag
 }

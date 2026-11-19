@@ -1,0 +1,106 @@
+package ollama
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/song-circle/devlog-kr/ai-office/internal/engine"
+)
+
+// fakeOllama answers /api/chat from a script: first a tool call (given as
+// text when asText is set, like qwen2.5-coder does), then a plain answer,
+// then the JSON asked for with "format".
+func fakeOllama(t *testing.T, asText bool, seen *[]map[string]any) *httptest.Server {
+	step := 0
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		*seen = append(*seen, body)
+		msg := map[string]any{"role": "assistant", "content": ""}
+		switch {
+		case body["format"] != nil:
+			msg["content"] = `{"word":"귤나무-4821"}`
+		case step == 0:
+			call := map[string]any{"function": map[string]any{"name": "read_file", "arguments": map[string]any{"path": "note.txt"}}}
+			if asText {
+				msg["content"] = `{"name": "read_file", "arguments": {"path": "note.txt"}}`
+			} else {
+				msg["tool_calls"] = []any{call}
+			}
+		default:
+			msg["content"] = "<think>음</think>비밀 단어는 귤나무-4821"
+		}
+		step++
+		json.NewEncoder(w).Encode(map[string]any{"message": msg, "prompt_eval_count": 10, "eval_count": 5})
+	}))
+}
+
+func runFake(t *testing.T, asText bool) (engine.Result, []map[string]any, string) {
+	var seen []map[string]any
+	srv := fakeOllama(t, asText, &seen)
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "note.txt"), []byte("비밀 단어: 귤나무-4821\n"), 0o644)
+	var events []engine.Event
+	res, err := (&Engine{}).Run(context.Background(), engine.Spec{
+		Prompt: "읽어", Dir: dir, Model: "m", Tools: []string{"Read", "Glob", "Grep"}, LogDir: filepath.Join(dir, "log"),
+		JSONSchema: `{"type":"object","properties":{"word":{"type":"string"}},"required":["word"]}`,
+	}, func(e engine.Event) { events = append(events, e) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res, seen, dir
+}
+
+func TestEngineToolLoopAndFormat(t *testing.T) {
+	for _, asText := range []bool{false, true} {
+		res, seen, _ := runFake(t, asText)
+		if res.Status != engine.StatusSuccess || res.ToolCalls != 1 || res.Text != "비밀 단어는 귤나무-4821" {
+			t.Errorf("asText=%v: %+v", asText, res)
+		}
+		if string(res.Structured) != `{"word":"귤나무-4821"}` {
+			t.Errorf("asText=%v structured %s", asText, res.Structured)
+		}
+		// The tool result went back to the model with the file's text.
+		msgs, _ := seen[1]["messages"].([]any)
+		last, _ := msgs[len(msgs)-1].(map[string]any)
+		if last["role"] != "tool" || !strings.Contains(last["content"].(string), "귤나무-4821") {
+			t.Errorf("asText=%v tool message %+v", asText, last)
+		}
+		if seen[len(seen)-1]["format"] == nil || seen[len(seen)-1]["tools"] != nil {
+			t.Errorf("asText=%v last request should use format without tools", asText)
+		}
+	}
+}
+
+func TestToolsStayInsideProject(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello\nworld\n"), 0o644)
+	if _, _, err := runTool(root, "read_file", map[string]any{"path": "../../secret.txt"}); err == nil {
+		t.Error("read outside the project allowed")
+	}
+	if _, _, err := runTool(root, "read_file", map[string]any{"path": `C:\Windows\win.ini`}); err == nil {
+		t.Error("absolute path outside the project allowed")
+	}
+	out, _, err := runTool(root, "search_text", map[string]any{"text": "WORLD"})
+	if err != nil || !strings.Contains(out, "a.txt:2:") {
+		t.Errorf("search: %q %v", out, err)
+	}
+	out, _, _ = runTool(root, "list_files", map[string]any{})
+	if strings.TrimSpace(out) != "a.txt" {
+		t.Errorf("list: %q", out)
+	}
+}
+
+func TestEngineRefusesWriting(t *testing.T) {
+	if _, err := (&Engine{}).Run(context.Background(), engine.Spec{Tools: nil}, nil); err == nil {
+		t.Error("developer (write) work accepted")
+	}
+}

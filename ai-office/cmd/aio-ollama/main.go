@@ -24,6 +24,7 @@ import (
 
 func main() {
 	timeout := flag.Duration("timeout", 5*time.Minute, "max time per model")
+	cc := flag.Bool("claude-code", false, "test inside Claude Code instead of the light local engine (not saved)")
 	flag.Parse()
 	windows.SetConsoleOutputCP(65001)
 	ctx := context.Background()
@@ -52,14 +53,21 @@ func main() {
 	fmt.Printf("%-24s %-6s %-6s %-6s %7s  %s\n", "model", "tools", "read", "json", "sec", "note")
 	for _, m := range models {
 		profile := filepath.Join(data, "profiles", "probe-"+strings.NewReplacer(":", "_", "/", "_").Replace(m))
-		r := ollama.Probe(ctx, m, profile, *timeout)
-		saved[m] = r
+		var r ollama.ProbeResult
+		if *cc {
+			r = ollama.ProbeClaudeCode(ctx, m, profile, *timeout)
+		} else {
+			r = ollama.Probe(ctx, m, profile, *timeout)
+			saved[m] = r
+		}
 		ok := "NO"
 		if r.OK() {
 			ok = "OK"
 		}
 		fmt.Printf("%-24s %-6d %-6v %-6v %7.0f  %s %s\n", m, r.ToolCalls, r.ReadFile, r.JSON, r.Seconds, ok, r.Note)
-		b, _ := json.Marshal(saved)
-		db.SetSetting("ollama_probe", string(b))
+		if !*cc {
+			b, _ := json.Marshal(saved)
+			db.SetSetting("ollama_probe", string(b))
+		}
 	}
 }
