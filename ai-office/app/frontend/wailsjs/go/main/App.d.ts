@@ -5,17 +5,33 @@ import {store} from '../models';
 
 export function Approve(arg1:string):Promise<void>;
 
+export function CancelLogin(arg1:number):Promise<void>;
+
+export function DeleteEmployee(arg1:number):Promise<void>;
+
 export function Detail(arg1:string):Promise<main.Detail>;
 
 export function Discard(arg1:string):Promise<void>;
+
+export function Employees():Promise<Array<main.EmployeeView>>;
 
 export function LastProject():Promise<main.Project>;
 
 export function List():Promise<Array<store.RequestRow>>;
 
+export function Login(arg1:number):Promise<void>;
+
+export function LoginCode(arg1:number,arg2:string):Promise<void>;
+
+export function Logout(arg1:number):Promise<void>;
+
+export function Models():Promise<Array<string>>;
+
 export function PickFolder():Promise<string>;
 
 export function Running():Promise<Array<string>>;
+
+export function SaveEmployee(arg1:store.Employee):Promise<number>;
 
 export function Start(arg1:main.StartInput):Promise<string>;
 

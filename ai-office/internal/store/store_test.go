@@ -56,3 +56,34 @@ func TestLifecycleAndInterrupt(t *testing.T) {
 		t.Errorf("events = %d", events)
 	}
 }
+
+func TestEmployees(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "aio.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.SeedEmployees(); err != nil {
+		t.Fatal(err)
+	}
+	s.SeedEmployees() // second call must not add more
+	es, _ := s.Employees()
+	if len(es) != 3 || es[0].Role != "pm" || es[1].Role != "dev" || es[2].Role != "qa" {
+		t.Fatalf("seed %+v", es)
+	}
+	id, err := s.SaveEmployee(Employee{Name: " 김개발 ", Role: "dev", Connection: "own", AuthMode: "console"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := s.Employee(id)
+	if e.Name != "김개발" || e.Model != "sonnet" || e.Connection != ConnOwn || e.AuthMode != "console" {
+		t.Errorf("saved %+v", e)
+	}
+	if _, err := s.SaveEmployee(Employee{Name: "x", Role: "boss"}); err == nil {
+		t.Error("bad role accepted")
+	}
+	s.DeleteEmployee(id)
+	if _, err := s.Employee(id); err == nil {
+		t.Error("deleted employee still visible")
+	}
+}

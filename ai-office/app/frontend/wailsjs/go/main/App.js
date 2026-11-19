@@ -6,12 +6,24 @@ export function Approve(arg1) {
   return window['go']['main']['App']['Approve'](arg1);
 }
 
+export function CancelLogin(arg1) {
+  return window['go']['main']['App']['CancelLogin'](arg1);
+}
+
+export function DeleteEmployee(arg1) {
+  return window['go']['main']['App']['DeleteEmployee'](arg1);
+}
+
 export function Detail(arg1) {
   return window['go']['main']['App']['Detail'](arg1);
 }
 
 export function Discard(arg1) {
   return window['go']['main']['App']['Discard'](arg1);
+}
+
+export function Employees() {
+  return window['go']['main']['App']['Employees']();
 }
 
 export function LastProject() {
@@ -22,12 +34,32 @@ export function List() {
   return window['go']['main']['App']['List']();
 }
 
+export function Login(arg1) {
+  return window['go']['main']['App']['Login'](arg1);
+}
+
+export function LoginCode(arg1, arg2) {
+  return window['go']['main']['App']['LoginCode'](arg1, arg2);
+}
+
+export function Logout(arg1) {
+  return window['go']['main']['App']['Logout'](arg1);
+}
+
+export function Models() {
+  return window['go']['main']['App']['Models']();
+}
+
 export function PickFolder() {
   return window['go']['main']['App']['PickFolder']();
 }
 
 export function Running() {
   return window['go']['main']['App']['Running']();
+}
+
+export function SaveEmployee(arg1) {
+  return window['go']['main']['App']['SaveEmployee'](arg1);
 }
 
 export function Start(arg1) {

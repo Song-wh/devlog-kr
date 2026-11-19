@@ -6,6 +6,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -155,9 +156,18 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.Exec(schema + employeeSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
+	}
+	// Columns added after the first release; "duplicate column" means done.
+	for _, m := range []string{
+		`ALTER TABLE runs ADD COLUMN agent TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := db.Exec(m); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			db.Close()
+			return nil, fmt.Errorf("migrate: %w", err)
+		}
 	}
 	return &Store{db: db}, nil
 }
@@ -276,6 +286,7 @@ type Run struct {
 	RequestID                             string
 	TaskID                                int64
 	Role, Engine, Model, Status           string
+	Agent                                 string // employee name
 	Turns, ToolCalls, ToolErrors, Denials int
 	InputTokens, OutputTokens, CacheRead  int64
 	CacheWrite                            int64
@@ -288,11 +299,11 @@ type Run struct {
 
 func (s *Store) AddRun(r Run) error {
 	_, err := s.db.Exec(`INSERT INTO runs(request_id, task_id, role, engine, model, status, turns, tool_calls, tool_errors, denials,
-		input_tokens, output_tokens, cache_read, cache_write, cost_usd, cost_estimated, duration_ms, log_dir, result_text, started_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		input_tokens, output_tokens, cache_read, cache_write, cost_usd, cost_estimated, duration_ms, log_dir, result_text, started_at, agent)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		r.RequestID, nullID(r.TaskID), r.Role, r.Engine, r.Model, r.Status, r.Turns, r.ToolCalls, r.ToolErrors, r.Denials,
 		r.InputTokens, r.OutputTokens, r.CacheRead, r.CacheWrite, r.CostUSD, r.CostEstimated, r.Duration.Milliseconds(),
-		r.LogDir, r.ResultText, r.StartedAt.Format(time.RFC3339Nano))
+		r.LogDir, r.ResultText, r.StartedAt.Format(time.RFC3339Nano), r.Agent)
 	return err
 }
 

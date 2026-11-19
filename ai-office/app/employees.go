@@ -1,0 +1,161 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"sync"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"github.com/Song-wh/devlog-kr/ai-office/internal/engine/claudecode"
+	"github.com/Song-wh/devlog-kr/ai-office/internal/orchestrator"
+	"github.com/Song-wh/devlog-kr/ai-office/internal/store"
+)
+
+// EmployeeView is an employee with the live state of its account.
+type EmployeeView struct {
+	store.Employee
+	Status    claudecode.AuthStatus `json:"status"`
+	LoggingIn bool                  `json:"loggingIn"`
+}
+
+// Models offered in the model picker. Claude Code also accepts full model
+// names, which the picker allows typing.
+func (a *App) Models() []string { return []string{"sonnet", "opus", "haiku", "fable"} }
+
+func (a *App) profileDir(id int64) string {
+	return filepath.Join(a.dataDir, "profiles", fmt.Sprintf("employee-%d", id))
+}
+
+func (a *App) agentFor(e store.Employee) orchestrator.Agent {
+	ag := orchestrator.Agent{Name: e.Name, Model: e.Model, Prompt: e.Prompt}
+	if e.Connection == store.ConnOwn {
+		ag.ProfileDir = a.profileDir(e.ID)
+	}
+	return ag
+}
+
+// Employees lists employees with their account status (checked in parallel).
+func (a *App) Employees() ([]EmployeeView, error) {
+	if err := a.ready(); err != nil {
+		return nil, err
+	}
+	es, err := a.st.Employees()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]EmployeeView, len(es))
+	var defaultStatus claudecode.AuthStatus
+	var once sync.Once
+	var wg sync.WaitGroup
+	for i, e := range es {
+		out[i].Employee = e
+		a.mu.Lock()
+		_, out[i].LoggingIn = a.logins[e.ID]
+		a.mu.Unlock()
+		wg.Add(1)
+		go func(i int, e store.Employee) {
+			defer wg.Done()
+			if e.Connection == store.ConnOwn {
+				out[i].Status = claudecode.Status(context.Background(), a.profileDir(e.ID))
+				return
+			}
+			once.Do(func() { defaultStatus = claudecode.Status(context.Background(), "") })
+			out[i].Status = defaultStatus
+		}(i, e)
+	}
+	wg.Wait()
+	return out, nil
+}
+
+func (a *App) SaveEmployee(e store.Employee) (int64, error) {
+	if err := a.ready(); err != nil {
+		return 0, err
+	}
+	return a.st.SaveEmployee(e)
+}
+
+// DeleteEmployee hides the employee. Its own login stays in its profile
+// folder until it is logged out.
+func (a *App) DeleteEmployee(id int64) error {
+	if err := a.ready(); err != nil {
+		return err
+	}
+	return a.st.DeleteEmployee(id)
+}
+
+// Login starts the official Claude Code sign-in for an employee with its own
+// account. The browser opens; "login" events carry Claude Code's output (the
+// fallback link) and "login-done" fires when it ends.
+func (a *App) Login(id int64) error {
+	if err := a.ready(); err != nil {
+		return err
+	}
+	e, err := a.st.Employee(id)
+	if err != nil {
+		return err
+	}
+	if e.Connection != store.ConnOwn {
+		return errors.New("이 직원은 이 PC의 기본 로그인을 씁니다. 따로 로그인하려면 연결 방식을 '전용 계정'으로 바꾸세요")
+	}
+	a.mu.Lock()
+	if _, busy := a.logins[id]; busy {
+		a.mu.Unlock()
+		return errors.New("이미 로그인 중입니다")
+	}
+	a.mu.Unlock()
+	l, err := claudecode.StartLogin(a.profileDir(id), e.AuthMode == "console", func(line string) {
+		runtime.EventsEmit(a.ctx, "login", map[string]any{"id": id, "line": line})
+	})
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	a.logins[id] = l
+	a.mu.Unlock()
+	go func() {
+		<-l.Done()
+		a.mu.Lock()
+		delete(a.logins, id)
+		a.mu.Unlock()
+		st := claudecode.Status(context.Background(), a.profileDir(id))
+		runtime.EventsEmit(a.ctx, "login-done", map[string]any{"id": id, "status": st})
+	}()
+	return nil
+}
+
+// LoginCode passes a code shown on the browser page to a sign-in in progress.
+func (a *App) LoginCode(id int64, code string) error {
+	a.mu.Lock()
+	l := a.logins[id]
+	a.mu.Unlock()
+	if l == nil {
+		return errors.New("진행 중인 로그인이 없습니다")
+	}
+	return l.SubmitCode(code)
+}
+
+func (a *App) CancelLogin(id int64) {
+	a.mu.Lock()
+	l := a.logins[id]
+	a.mu.Unlock()
+	if l != nil {
+		l.Cancel()
+	}
+}
+
+func (a *App) Logout(id int64) error {
+	if err := a.ready(); err != nil {
+		return err
+	}
+	e, err := a.st.Employee(id)
+	if err != nil {
+		return err
+	}
+	if e.Connection != store.ConnOwn {
+		return errors.New("기본 로그인은 앱에서 로그아웃하지 않습니다(이 PC의 Claude Code 로그인)")
+	}
+	return claudecode.Logout(a.profileDir(id))
+}

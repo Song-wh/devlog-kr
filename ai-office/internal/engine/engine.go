@@ -19,6 +19,7 @@ type Spec struct {
 	LogDir       string        // raw output is written here
 	SystemPrompt string        // role instructions appended to the engine's own
 	JSONSchema   string        // if set, the final answer must match this schema
+	ProfileDir   string        // engine account folder (own login); empty = the PC's default login
 }
 
 // EventKind tells what an Event carries.

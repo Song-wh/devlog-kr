@@ -5,11 +5,12 @@
   import type { store } from '../wailsjs/go/models'
   import NewRequest from './NewRequest.svelte'
   import RequestView from './RequestView.svelte'
+  import Employees from './Employees.svelte'
 
   type Log = { id: string; t: number; role: string; line: string }
 
   let requests = $state<store.RequestRow[]>([])
-  let selected = $state<string | null>(null) // null = new request form
+  let selected = $state<string | null>(null) // null = new request form, 'employees' = employee screen
   let running = $state<string[]>([])
   let logs = $state<Record<string, Log[]>>({})
   let error = $state('')
@@ -54,6 +55,7 @@
   <aside>
     <div class="brand">AI Office</div>
     <button class="primary new" onclick={() => (selected = null)}>+ 새 요청</button>
+    <button class="nav" class:active={selected === 'employees'} onclick={() => (selected = 'employees')}>직원 관리</button>
     <div class="list">
       {#each requests as r (r.id)}
         <button class="item" class:active={selected === r.id} onclick={() => (selected = r.id)}>
@@ -73,7 +75,9 @@
   <main>
     {#if error}<div class="err">{error}</div>{/if}
     {#if selected === null}
-      <NewRequest onstarted={started} />
+      <NewRequest onstarted={started} onemployees={() => (selected = 'employees')} />
+    {:else if selected === 'employees'}
+      <Employees />
     {:else}
       {#key selected}
         <RequestView id={selected} live={logs[selected] ?? []} isRunning={running.includes(selected)} {tick} onchanged={refresh} />
@@ -86,7 +90,9 @@
   .layout { display: grid; grid-template-columns: 300px 1fr; height: 100%; }
   aside { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
   .brand { font-weight: 700; font-size: 18px; padding: 18px 16px 10px; color: var(--accent); }
-  .new { margin: 0 12px 10px; }
+  .new { margin: 0 12px 8px; }
+  .nav { margin: 0 12px 12px; background: transparent; }
+  .nav.active { border-color: var(--accent); }
   .list { overflow-y: auto; flex: 1; padding: 0 8px 12px; }
   .item { display: block; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; margin-bottom: 4px; padding: 9px 10px; }
   .item.active { background: var(--panel2); border-color: var(--border); }

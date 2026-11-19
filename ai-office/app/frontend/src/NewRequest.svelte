@@ -1,15 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { LastProject, PickFolder, Start } from '../wailsjs/go/main/App'
+  import { Employees, LastProject, PickFolder, Start } from '../wailsjs/go/main/App'
+  import type { main } from '../wailsjs/go/models'
 
-  let { onstarted }: { onstarted: (id: string) => void } = $props()
+  let { onstarted, onemployees }: { onstarted: (id: string) => void; onemployees: () => void } = $props()
 
   let repo = $state('')
   let checks = $state('')
   let protect = $state('')
   let request = $state('')
   let mode = $state('review')
-  let model = $state('sonnet')
+  let staff = $state<main.EmployeeView[]>([])
+  let team = $state<Record<string, number>>({ pm: 0, dev: 0, qa: 0 })
   let budget = $state(2)
   let fixRounds = $state(3)
   let busy = $state(false)
@@ -17,6 +19,11 @@
 
   onMount(async () => {
     try {
+      staff = (await Employees()) ?? []
+      for (const r of ['pm', 'dev', 'qa']) {
+        const first = staff.find((e) => e.role === r)
+        if (first) team[r] = first.id
+      }
       const p = await LastProject()
       repo = p.repo ?? ''
       checks = (p.checks ?? []).join('\n')
@@ -41,7 +48,7 @@
     try {
       const id = await Start({
         project: { repo, checks: checks.split('\n'), protect: protect.split(',') },
-        request, mode, model, budgetUsd: Number(budget), fixRounds: Number(fixRounds),
+        request, mode, team, budgetUsd: Number(budget), fixRounds: Number(fixRounds),
       } as any)
       request = ''
       onstarted(id)
@@ -92,15 +99,22 @@
   {/each}
 </div>
 
+<span class="lbl">참여 직원 <button class="link" onclick={onemployees}>직원 관리</button></span>
 <div class="cols3">
-  <div>
-    <label for="model">모델</label>
-    <select id="model" bind:value={model}>
-      <option value="sonnet">sonnet</option>
-      <option value="opus">opus</option>
-      <option value="haiku">haiku</option>
-    </select>
-  </div>
+  {#each [['pm', 'PM'], ['dev', '개발자'], ['qa', 'QA']] as [r, name]}
+    {@const used = mode === 'solo' ? r === 'dev' : mode === 'team' ? r !== 'qa' : true}
+    <div class:off={!used}>
+      <label for={'t-' + r}>{name}{used ? '' : ' (이 방식에서는 쉼)'}</label>
+      <select id={'t-' + r} bind:value={team[r]} disabled={!used}>
+        {#each staff.filter((e) => e.role === r) as e}
+          <option value={e.id}>{e.name} · {e.model} · {e.connection === 'own' ? (e.status?.loggedIn ? '전용 계정' : '전용 계정(로그인 필요)') : '기본 로그인'}</option>
+        {/each}
+      </select>
+    </div>
+  {/each}
+</div>
+
+<div class="cols3">
   <div>
     <label for="budget">예산 (요청 전체, USD)</label>
     <input id="budget" type="number" min="0.1" step="0.5" bind:value={budget} />
@@ -131,4 +145,6 @@
   .mode.on { border-color: var(--accent); background: rgba(232, 135, 95, .1); }
   .actions { margin-top: 20px; }
   .err { color: var(--red); }
+  .off { opacity: .45; }
+  .link { background: none; border: none; color: var(--blue); padding: 0 0 0 8px; font-size: 12px; }
 </style>

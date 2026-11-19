@@ -109,6 +109,9 @@ func (e *Engine) Run(ctx context.Context, spec engine.Spec, onEvent func(engine.
 	cmd := exec.Command(exe, Args(spec)...)
 	cmd.Dir = spec.Dir
 	cmd.Stdin = strings.NewReader(spec.Prompt)
+	if spec.ProfileDir != "" {
+		cmd.Env = ProfileEnv(spec.ProfileDir)
+	}
 	cmd.Stderr = errLog
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

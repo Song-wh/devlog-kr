@@ -30,10 +30,11 @@ type App struct {
 
 	mu      sync.Mutex
 	running map[string]context.CancelFunc
+	logins  map[int64]*claudecode.Login
 }
 
 func NewApp() *App {
-	return &App{running: map[string]context.CancelFunc{}}
+	return &App{running: map[string]context.CancelFunc{}, logins: map[int64]*claudecode.Login{}}
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -50,12 +51,18 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.st = st
 	st.MarkInterrupted() // requests left running by a previous session
+	if err := st.SeedEmployees(); err != nil {
+		a.initErr = err
+	}
 }
 
 func (a *App) shutdown(ctx context.Context) {
 	a.mu.Lock()
 	for _, cancel := range a.running {
 		cancel()
+	}
+	for _, l := range a.logins {
+		l.Cancel()
 	}
 	a.mu.Unlock()
 	if a.st != nil {
@@ -113,12 +120,12 @@ func (a *App) PickFolder() (string, error) {
 
 // StartInput is the new-request form.
 type StartInput struct {
-	Project   Project `json:"project"`
-	Request   string  `json:"request"`
-	Mode      string  `json:"mode"` // solo / team / review
-	Model     string  `json:"model"`
-	BudgetUSD float64 `json:"budgetUsd"`
-	FixRounds int     `json:"fixRounds"`
+	Project   Project          `json:"project"`
+	Request   string           `json:"request"`
+	Mode      string           `json:"mode"` // solo / team / review
+	Team      map[string]int64 `json:"team"` // role (pm/dev/qa) -> employee id
+	BudgetUSD float64          `json:"budgetUsd"`
+	FixRounds int              `json:"fixRounds"`
 }
 
 // LogLine is pushed to the frontend as the "log" event.
@@ -148,8 +155,25 @@ func (a *App) Start(in StartInput) (string, error) {
 	if b, err := json.Marshal(in.Project); err == nil {
 		a.st.SetSetting("last_project", string(b))
 	}
-	if in.Model == "" {
-		in.Model = "sonnet"
+	agents := map[string]orchestrator.Agent{}
+	for _, role := range []string{"pm", "dev", "qa"} {
+		if in.Mode == "solo" && role != "dev" || in.Mode == "team" && role == "qa" {
+			continue
+		}
+		id, ok := in.Team[role]
+		if !ok || id == 0 {
+			return "", fmt.Errorf("%s 역할을 맡을 직원을 골라 주세요", strings.ToUpper(role))
+		}
+		e, err := a.st.Employee(id)
+		if err != nil {
+			return "", err
+		}
+		if e.Connection == store.ConnOwn {
+			if s := claudecode.Status(context.Background(), a.profileDir(e.ID)); !s.LoggedIn {
+				return "", fmt.Errorf("%s 직원이 로그인되어 있지 않습니다. 직원 화면에서 로그인하세요", e.Name)
+			}
+		}
+		agents[role] = a.agentFor(e)
 	}
 	if in.BudgetUSD <= 0 {
 		in.BudgetUSD = 2
@@ -172,7 +196,7 @@ func (a *App) Start(in StartInput) (string, error) {
 	}
 	cfg := orchestrator.Config{
 		ID: id, Repo: top, Request: in.Request, Checks: in.Project.Checks, Protect: in.Project.Protect,
-		PMModel: in.Model, DevModel: in.Model, MaxFixRounds: in.FixRounds, BudgetUSD: in.BudgetUSD,
+		PMModel: "sonnet", DevModel: "sonnet", Agents: agents, MaxFixRounds: in.FixRounds, BudgetUSD: in.BudgetUSD,
 		TaskTimeout: 15 * time.Minute, CheckTimeout: 5 * time.Minute,
 		Solo: in.Mode == "solo", Review: in.Mode == "review",
 	}

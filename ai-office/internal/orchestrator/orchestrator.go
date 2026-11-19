@@ -36,6 +36,18 @@ type Config struct {
 	Solo         bool          `json:"solo"`     // skip the PM: one task = the request itself
 	Review       bool          `json:"review"`   // after checks pass, a QA agent reviews the diff (team mode only)
 	QAModel      string        `json:"qa_model"` // engine model for the reviewer (default: DevModel)
+	// Agents assigns an employee to a role ("pm", "dev", "qa"). Its model
+	// and account override the fields above; missing roles use them as is.
+	Agents map[string]Agent `json:"agents,omitempty"`
+}
+
+// Agent is the employee doing a role: which account, which model, and any
+// extra instructions on top of the role's own.
+type Agent struct {
+	Name       string `json:"name"`
+	Model      string `json:"model"`
+	ProfileDir string `json:"-"` // engine account folder; empty = default login
+	Prompt     string `json:"prompt,omitempty"`
 }
 
 // NewID returns a request id: local time to the millisecond, usable in a
@@ -242,13 +254,25 @@ func (r *run) runTask(ctx context.Context, taskID int64, role, model, prompt, sy
 		st.SetTaskStatus(taskID, store.Failed, "budget exhausted")
 		return engine.Result{}, errBudget
 	}
-	st.SetTaskStatus(taskID, store.Assigned, role)
+	ag := r.cfg.Agents[role]
+	if ag.Model != "" {
+		model = ag.Model
+	}
+	if ag.Prompt != "" {
+		system += "\n\n이 직원에게만 주는 추가 지시:\n" + ag.Prompt
+	}
+	who := role
+	if ag.Name != "" {
+		who = ag.Name
+	}
+	st.SetTaskStatus(taskID, store.Assigned, who)
 	st.SetTaskStatus(taskID, store.InProgress, "")
 	r.runNo++
 	logDir := filepath.Join(r.dir, fmt.Sprintf("%02d-%s", r.runNo, role))
 	spec := engine.Spec{
 		Prompt: prompt, Dir: r.wt.Dir, Model: model, MaxBudgetUSD: remaining,
 		Timeout: r.cfg.TaskTimeout, LogDir: logDir, SystemPrompt: system, JSONSchema: schema,
+		ProfileDir: ag.ProfileDir,
 	}
 	if role == "pm" || role == "qa" {
 		spec.Tools = []string{"Read", "Glob", "Grep"} // planners and reviewers only read
@@ -267,7 +291,7 @@ func (r *run) runTask(ctx context.Context, taskID int64, role, model, prompt, sy
 		Turns: res.Turns, ToolCalls: res.ToolCalls, ToolErrors: res.ToolErrors, Denials: res.Denials,
 		InputTokens: res.Usage.InputTokens, OutputTokens: res.Usage.OutputTokens,
 		CacheRead: res.Usage.CacheReadTokens, CacheWrite: res.Usage.CacheCreateTokens,
-		CostUSD: res.Usage.CostUSD, CostEstimated: res.Usage.CostEstimated,
+		CostUSD: res.Usage.CostUSD, CostEstimated: res.Usage.CostEstimated, Agent: ag.Name,
 		Duration: res.Duration, LogDir: logDir, ResultText: res.Text, StartedAt: start,
 	})
 	r.o.log(role, fmt.Sprintf("done: %s, %.0fs, $%.4f", res.Status, res.Duration.Seconds(), res.Usage.CostUSD))

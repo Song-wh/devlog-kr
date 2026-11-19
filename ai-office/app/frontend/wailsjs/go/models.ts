@@ -1,3 +1,30 @@
+export namespace claudecode {
+	
+	export class AuthStatus {
+	    loggedIn: boolean;
+	    authMethod: string;
+	    email?: string;
+	    orgName?: string;
+	    plan?: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AuthStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.loggedIn = source["loggedIn"];
+	        this.authMethod = source["authMethod"];
+	        this.email = source["email"];
+	        this.orgName = source["orgName"];
+	        this.plan = source["plan"];
+	        this.error = source["error"];
+	    }
+	}
+
+}
+
 export namespace main {
 	
 	export class Detail {
@@ -38,6 +65,54 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class EmployeeView {
+	    id: number;
+	    name: string;
+	    role: string;
+	    model: string;
+	    prompt: string;
+	    connection: string;
+	    authMode: string;
+	    createdAt: string;
+	    status: claudecode.AuthStatus;
+	    loggingIn: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new EmployeeView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.role = source["role"];
+	        this.model = source["model"];
+	        this.prompt = source["prompt"];
+	        this.connection = source["connection"];
+	        this.authMode = source["authMode"];
+	        this.createdAt = source["createdAt"];
+	        this.status = this.convertValues(source["status"], claudecode.AuthStatus);
+	        this.loggingIn = source["loggingIn"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class Project {
 	    repo: string;
 	    checks: string[];
@@ -58,7 +133,7 @@ export namespace main {
 	    project: Project;
 	    request: string;
 	    mode: string;
-	    model: string;
+	    team: Record<string, number>;
 	    budgetUsd: number;
 	    fixRounds: number;
 	
@@ -71,7 +146,7 @@ export namespace main {
 	        this.project = this.convertValues(source["project"], Project);
 	        this.request = source["request"];
 	        this.mode = source["mode"];
-	        this.model = source["model"];
+	        this.team = source["team"];
 	        this.budgetUsd = source["budgetUsd"];
 	        this.fixRounds = source["fixRounds"];
 	    }
@@ -121,6 +196,32 @@ export namespace store {
 	        this.seconds = source["seconds"];
 	        this.protected = source["protected"];
 	        this.logPath = source["logPath"];
+	    }
+	}
+	export class Employee {
+	    id: number;
+	    name: string;
+	    role: string;
+	    model: string;
+	    prompt: string;
+	    connection: string;
+	    authMode: string;
+	    createdAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Employee(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.role = source["role"];
+	        this.model = source["model"];
+	        this.prompt = source["prompt"];
+	        this.connection = source["connection"];
+	        this.authMode = source["authMode"];
+	        this.createdAt = source["createdAt"];
 	    }
 	}
 	export class RequestRow {

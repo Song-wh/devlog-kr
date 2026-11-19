@@ -194,3 +194,34 @@ func TestBudgetStopsTheTeam(t *testing.T) {
 		t.Errorf("engine calls = %d, want 2", len(fe.calls))
 	}
 }
+
+// An employee assigned to a role brings its own model, account folder and
+// extra instructions to every run of that role.
+func TestAgentsOverrideRole(t *testing.T) {
+	repo := newRepo(t)
+	data := t.TempDir()
+	st, _ := store.Open(filepath.Join(data, "aio.db"))
+	defer st.Close()
+	fe := &fakeEngine{t: t, dev: []func(string){
+		func(d string) { write(t, d, "a.txt", "a") },
+		func(d string) { write(t, d, "b.txt", "b") },
+	}}
+	o := &Orchestrator{Engine: fe, Store: st, DataDir: data}
+	out, err := o.Run(context.Background(), Config{Repo: repo, Request: "x", BudgetUSD: 5, PMModel: "sonnet", DevModel: "sonnet",
+		Agents: map[string]Agent{"dev": {Name: "김개발", Model: "opus", ProfileDir: `C:\p\dev`, Prompt: "주석은 한국어로"}}})
+	if err != nil || out.Status != store.ReqDone {
+		t.Fatalf("%v %+v", err, out)
+	}
+	pm, dev := fe.calls[0], fe.calls[1]
+	if pm.Model != "sonnet" || pm.ProfileDir != "" {
+		t.Errorf("pm spec %q %q", pm.Model, pm.ProfileDir)
+	}
+	if dev.Model != "opus" || dev.ProfileDir != `C:\p\dev` || !strings.Contains(dev.SystemPrompt, "주석은 한국어로") {
+		t.Errorf("dev spec model %q profile %q", dev.Model, dev.ProfileDir)
+	}
+	var agent string
+	st.DB().QueryRow(`SELECT agent FROM runs WHERE request_id=? AND role='dev' LIMIT 1`, out.RequestID).Scan(&agent)
+	if agent != "김개발" {
+		t.Errorf("run agent = %q", agent)
+	}
+}
