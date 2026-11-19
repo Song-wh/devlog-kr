@@ -19,6 +19,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"github.com/song-circle/devlog-kr/ai-office/internal/engine/claudecode"
+	"github.com/song-circle/devlog-kr/ai-office/internal/ollama"
 	"github.com/song-circle/devlog-kr/ai-office/internal/orchestrator"
 	"github.com/song-circle/devlog-kr/ai-office/internal/report"
 	"github.com/song-circle/devlog-kr/ai-office/internal/store"
@@ -47,7 +48,7 @@ func run() int {
 		reviewFlag  = flag.Bool("review", true, "after checks pass, a QA agent reviews the diff (team mode)")
 		qaModel     = flag.String("qa-model", "", "model for the QA reviewer (default: dev model)")
 		mode        = flag.String("mode", "", "ask / plan / audit (read only) or solo / team / review; overrides -solo and -review")
-		panel       = flag.String("review-panel", "", "cross-review panel, e.g. \"QA1:sonnet,QA2:opus,QA3:sonnet\" (review stage needs 2+, audit 1+)")
+		panel       = flag.String("review-panel", "", "cross-review panel, e.g. \"QA1:sonnet,QA2:opus,Local:qwen3:8b@ollama\" (review stage needs 2+, audit 1+)")
 		notes       = flag.String("notes", "", "project notes given to every employee")
 		dataDir     = flag.String("data", defaultDataDir(), "worktrees, logs and database")
 	)
@@ -141,7 +142,14 @@ func panels(spec string) map[string][]orchestrator.Agent {
 		if model == "" {
 			model = "sonnet"
 		}
-		p = append(p, orchestrator.Agent{Name: name, Model: model})
+		ag := orchestrator.Agent{Name: name, Model: model}
+		// "Name:model@ollama" = a model served by Ollama on this PC.
+		if m, ok := strings.CutSuffix(model, "@ollama"); ok {
+			ag.Model = m
+			ag.Env = ollama.Env(m)
+			ag.ProfileDir = filepath.Join(defaultDataDir(), "profiles", "ollama-"+strings.NewReplacer(":", "_", "/", "_").Replace(m))
+		}
+		p = append(p, ag)
 	}
 	return map[string][]orchestrator.Agent{"review": p}
 }
