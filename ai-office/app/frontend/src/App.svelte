@@ -49,7 +49,7 @@
   }
 
   const cost = (c: number) => '$' + c.toFixed(3)
-  const modeName: Record<string, string> = { ask: '질문', plan: '기획', audit: '검토', solo: '혼자 개발', team: '팀', review: '팀 + QA' }
+  const modeName: Record<string, string> = { ask: '질문', plan: '기획', audit: '검토', meeting: '회의', solo: '혼자 개발', team: '팀', review: '팀 + QA' }
   const short = (s: string) => (s.length > 60 ? s.slice(0, 60) + '…' : s)
 </script>
 

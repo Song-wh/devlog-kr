@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","cwd":"C:/w","session_id":"s3","model":"claude-sonnet-5"}
+{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"terminal_reason":"api_error","num_turns":0,"result":"You've hit your session limit · resets 1:50pm (Asia/Seoul)","session_id":"s3","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0}}

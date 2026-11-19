@@ -117,3 +117,19 @@ func TestArgsDefaults(t *testing.T) {
 		t.Errorf("budget wrong: %v", a)
 	}
 }
+
+// A usage-limit stop is its own status, with the engine's message kept.
+func TestParseStreamLimited(t *testing.T) {
+	f, err := os.Open("testdata/limited.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var res engine.Result
+	if _, err := parseStream(f, nil, &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != engine.StatusLimited || res.Text == "" {
+		t.Errorf("status %q text %q", res.Status, res.Text)
+	}
+}

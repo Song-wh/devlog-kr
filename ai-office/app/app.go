@@ -155,8 +155,12 @@ type StartInput struct {
 	Request   string           `json:"request"`
 	Mode      string           `json:"mode"` // ask / plan / audit / solo / team / review
 	Team      map[string]int64 `json:"team"` // slot (ask/pm/dev/qa) -> employee id
-	BudgetUSD float64          `json:"budgetUsd"`
-	FixRounds int              `json:"fixRounds"`
+	// Panels turn a stage into a meeting: "plan", "review" or "meeting" ->
+	// employee ids in speaking order (the first one drafts / moderates).
+	Panels    map[string][]int64 `json:"panels"`
+	Rounds    int                `json:"rounds"`
+	BudgetUSD float64            `json:"budgetUsd"`
+	FixRounds int                `json:"fixRounds"`
 }
 
 // slotsFor lists who takes part in each mode.
@@ -174,6 +178,8 @@ func slotsFor(mode string) ([]string, error) {
 		return []string{"pm", "dev"}, nil
 	case orchestrator.ModeReview:
 		return []string{"pm", "dev", "qa"}, nil
+	case orchestrator.ModeMeeting:
+		return nil, nil
 	}
 	return nil, fmt.Errorf("알 수 없는 진행 방식: %s", mode)
 }
@@ -208,22 +214,51 @@ func (a *App) Start(in StartInput) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	agentByID := func(id int64) (orchestrator.Agent, error) {
+		e, err := a.st.Employee(id)
+		if err != nil {
+			return orchestrator.Agent{}, err
+		}
+		if e.Connection == store.ConnOwn {
+			if s := claudecode.Status(context.Background(), a.profileDir(e.ID)); !s.LoggedIn {
+				return orchestrator.Agent{}, fmt.Errorf("%s 직원이 로그인되어 있지 않습니다. 직원 화면에서 로그인하세요", e.Name)
+			}
+		}
+		return a.agentFor(e), nil
+	}
 	agents := map[string]orchestrator.Agent{}
 	for _, slot := range slots {
 		id, ok := in.Team[slot]
 		if !ok || id == 0 {
 			return "", errors.New("참여할 직원을 골라 주세요")
 		}
-		e, err := a.st.Employee(id)
+		ag, err := agentByID(id)
 		if err != nil {
 			return "", err
 		}
-		if e.Connection == store.ConnOwn {
-			if s := claudecode.Status(context.Background(), a.profileDir(e.ID)); !s.LoggedIn {
-				return "", fmt.Errorf("%s 직원이 로그인되어 있지 않습니다. 직원 화면에서 로그인하세요", e.Name)
-			}
+		agents[slot] = ag
+	}
+	panels := map[string][]orchestrator.Agent{}
+	for stage, ids := range in.Panels {
+		if len(ids) == 0 {
+			continue
 		}
-		agents[slot] = a.agentFor(e)
+		if len(ids) < 2 {
+			return "", errors.New("회의에는 2명 이상이 필요합니다")
+		}
+		if len(ids) > 4 {
+			return "", errors.New("회의는 4명까지입니다")
+		}
+		for _, id := range ids {
+			ag, err := agentByID(id)
+			if err != nil {
+				return "", err
+			}
+			panels[stage] = append(panels[stage], ag)
+		}
+	}
+	if in.Mode == orchestrator.ModeMeeting && len(panels["meeting"]) < 2 {
+		return "", errors.New("회의에 참석할 직원을 2명 이상 골라 주세요")
 	}
 	if in.BudgetUSD <= 0 {
 		in.BudgetUSD = 2
@@ -248,7 +283,7 @@ func (a *App) Start(in StartInput) (string, error) {
 		ID: id, Repo: top, Request: in.Request, Checks: proj.Checks, Protect: proj.Protect,
 		PMModel: "sonnet", DevModel: "sonnet", Agents: agents, MaxFixRounds: in.FixRounds, BudgetUSD: in.BudgetUSD,
 		TaskTimeout: 15 * time.Minute, CheckTimeout: 5 * time.Minute,
-		Mode: in.Mode, ProjectID: proj.ID, ProjectNotes: proj.Notes,
+		Mode: in.Mode, ProjectID: proj.ID, ProjectNotes: proj.Notes, Panels: panels, MeetingRounds: in.Rounds,
 	}
 	// Create the worktree and the database row now, so the request exists
 	// (and setup errors reach the form) before this call returns.
@@ -313,12 +348,13 @@ func (a *App) List() ([]store.RequestRow, error) {
 
 // Detail is everything the request screen shows.
 type Detail struct {
-	Request store.RequestRow `json:"request"`
-	Tasks   []store.TaskRow  `json:"tasks"`
-	Checks  []store.CheckRow `json:"checks"`
-	Report  string           `json:"report"`
-	Diff    string           `json:"diff"`
-	Answer  string           `json:"answer"` // read-only modes: the answer / plan / review
+	Request  store.RequestRow `json:"request"`
+	Tasks    []store.TaskRow  `json:"tasks"`
+	Checks   []store.CheckRow `json:"checks"`
+	Report   string           `json:"report"`
+	Diff     string           `json:"diff"`
+	Answer   string           `json:"answer"`   // read-only modes: the answer / plan / review
+	Messages []store.Message  `json:"messages"` // meeting statements
 }
 
 // LastProjectID is the project used last time (0 if none).
@@ -346,6 +382,9 @@ func (a *App) Detail(id string) (*Detail, error) {
 		return nil, err
 	}
 	d := &Detail{Request: r}
+	if d.Messages, err = a.st.Messages(id); err != nil {
+		return nil, err
+	}
 	if d.Tasks, err = a.st.Tasks(id); err != nil {
 		return nil, err
 	}

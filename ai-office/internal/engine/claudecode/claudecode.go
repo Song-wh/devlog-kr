@@ -192,6 +192,7 @@ type streamMsg struct {
 	SessionID         string          `json:"session_id"`
 	PermissionDenials json.RawMessage `json:"permission_denials"`
 	StructuredOutput  json.RawMessage `json:"structured_output"`
+	APIErrorStatus    int             `json:"api_error_status"`
 	Usage             *struct {
 		InputTokens              int64 `json:"input_tokens"`
 		OutputTokens             int64 `json:"output_tokens"`
@@ -371,7 +372,9 @@ func parseStream(r io.Reader, onEvent func(engine.Event), res *engine.Result) (b
 			if json.Unmarshal(m.PermissionDenials, &denials) == nil {
 				res.Denials = len(denials)
 			}
-			if m.IsError {
+			if m.IsError && m.APIErrorStatus == 429 {
+				res.Status = engine.StatusLimited // e.g. "You've hit your session limit · resets 1:50pm"
+			} else if m.IsError {
 				res.Status = engine.StatusError
 			} else {
 				res.Status = engine.StatusSuccess

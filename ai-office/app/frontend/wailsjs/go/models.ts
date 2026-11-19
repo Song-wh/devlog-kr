@@ -34,6 +34,7 @@ export namespace main {
 	    report: string;
 	    diff: string;
 	    answer: string;
+	    messages: store.Message[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Detail(source);
@@ -47,6 +48,7 @@ export namespace main {
 	        this.report = source["report"];
 	        this.diff = source["diff"];
 	        this.answer = source["answer"];
+	        this.messages = this.convertValues(source["messages"], store.Message);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -120,6 +122,8 @@ export namespace main {
 	    request: string;
 	    mode: string;
 	    team: Record<string, number>;
+	    panels: Record<string, Array<number>>;
+	    rounds: number;
 	    budgetUsd: number;
 	    fixRounds: number;
 	
@@ -133,6 +137,8 @@ export namespace main {
 	        this.request = source["request"];
 	        this.mode = source["mode"];
 	        this.team = source["team"];
+	        this.panels = source["panels"];
+	        this.rounds = source["rounds"];
 	        this.budgetUsd = source["budgetUsd"];
 	        this.fixRounds = source["fixRounds"];
 	    }
@@ -190,6 +196,40 @@ export namespace store {
 	        this.connection = source["connection"];
 	        this.authMode = source["authMode"];
 	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class Message {
+	    id: number;
+	    requestId: string;
+	    taskId: number;
+	    meeting: string;
+	    round: number;
+	    sender: string;
+	    receiver: string;
+	    kind: string;
+	    content: string;
+	    data: string;
+	    costUsd: number;
+	    at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Message(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.requestId = source["requestId"];
+	        this.taskId = source["taskId"];
+	        this.meeting = source["meeting"];
+	        this.round = source["round"];
+	        this.sender = source["sender"];
+	        this.receiver = source["receiver"];
+	        this.kind = source["kind"];
+	        this.content = source["content"];
+	        this.data = source["data"];
+	        this.costUsd = source["costUsd"];
+	        this.at = source["at"];
 	    }
 	}
 	export class Project {

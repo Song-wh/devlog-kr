@@ -10,8 +10,8 @@
   let d = $state<main.Detail | null>(null)
   let error = $state('')
   let busy = $state(false)
-  let tab = $state<'answer' | 'log' | 'diff' | 'report'>('log')
-  let readOnly = $derived(['ask', 'plan', 'audit'].includes(d?.request.mode ?? ''))
+  let tab = $state<'answer' | 'meeting' | 'log' | 'diff' | 'report'>('log')
+  let readOnly = $derived(['ask', 'plan', 'audit', 'meeting'].includes(d?.request.mode ?? ''))
   let shownAnswer = false
 
   async function load() {
@@ -19,6 +19,7 @@
       const x = await Detail(id)
       x.tasks ??= []
       x.checks ??= []
+      x.messages ??= []
       d = x
       if (x.answer && !shownAnswer) {
         tab = 'answer' // jump to the answer once it arrives
@@ -53,6 +54,25 @@
 
   const roleColor: Record<string, string> = { pm: 'var(--blue)', dev: 'var(--accent)', qa: 'var(--green)', ask: 'var(--blue)', system: 'var(--muted)' }
   const kindName: Record<string, string> = { plan: '계획', work: '작업', fix: '수정', review: 'QA 리뷰', answer: '답변' }
+  const kindLabel: Record<string, string> = {
+    finding: '검토', verdict: '교차 확인', conclusion: '결론', draft: '초안', critique: '비판', revision: '수정본',
+    opinion: '입장', rebuttal: '반박',
+  }
+  // A few readable lines from a message's structured data.
+  function detailLines(m: { kind: string; data: string }): string[] {
+    let x: any
+    try { x = JSON.parse(m.data) } catch { return [] }
+    switch (m.kind) {
+      case 'finding': return (x.issues ?? []).map((i: any) => `• [${i.severity}] ${i.file}: ${i.problem}`)
+      case 'verdict': return (x.verdicts ?? []).map((v: any) => `• ${v.id} → ${v.verdict === 'valid' ? '맞음' : v.verdict === 'invalid' ? '틀림' : '모름'}: ${v.reason}`)
+      case 'conclusion': return Array.isArray(x) ? x.map((f: any) => `• ${f.accepted ? '채택' : '기각'} ${f.id} (${f.author}) ${f.problem}`) : []
+      case 'critique': return (x.points ?? []).map((p: any) => `• ${p.point} — ${p.suggestion}`)
+      case 'opinion': case 'rebuttal':
+        return [...(x.reasons ?? []).map((r: string) => '• ' + r), ...(x.agree_with?.length ? ['동의: ' + x.agree_with.join(', ')] : []),
+          ...(x.disagree ?? []).map((g: any) => `반대(${g.name}): ${g.why}`), ...(x.changed ? ['(입장을 바꿈)'] : [])]
+    }
+    return []
+  }
   const diffClass = (l: string) =>
     l.startsWith('+++') || l.startsWith('---') ? 'dh' : l.startsWith('+') ? 'da' : l.startsWith('-') ? 'dd' : l.startsWith('@@') ? 'dh' : ''
 </script>
@@ -107,6 +127,7 @@
 
   <div class="tabs">
     {#if readOnly}<button class:on={tab === 'answer'} onclick={() => (tab = 'answer')}>{r.mode === 'plan' ? '기획서' : r.mode === 'audit' ? '검토 결과' : '답변'}</button>{/if}
+    {#if d.messages.length}<button class:on={tab === 'meeting'} onclick={() => (tab = 'meeting')}>회의 ({d.messages.length})</button>{/if}
     <button class:on={tab === 'log'} onclick={() => (tab = 'log')}>진행 기록</button>
     {#if !readOnly}<button class:on={tab === 'diff'} onclick={() => (tab = 'diff')}>변경 내용</button>{/if}
     <button class:on={tab === 'report'} onclick={() => (tab = 'report')}>보고서</button>
@@ -114,6 +135,14 @@
   <div class="box">
     {#if tab === 'answer'}
       {#if d.answer}<div class="answer">{d.answer}</div>{:else}<p class="muted">아직 답변이 없습니다.</p>{/if}
+    {:else if tab === 'meeting'}
+      {#each d.messages as m (m.id)}
+        <div class="msg" class:sys={m.sender === 'AI Office'}>
+          <div class="mh"><b>{m.sender}</b> <span class="kind k-{m.kind}">{kindLabel[m.kind] ?? m.kind}</span> <span class="muted">{m.round}라운드{m.costUsd ? ' · $' + m.costUsd.toFixed(3) : ''}</span></div>
+          <div class="mc">{m.content}</div>
+          {#each detailLines(m) as line}<div class="ml">{line}</div>{/each}
+        </div>
+      {/each}
     {:else if tab === 'log'}
       {#if live.length === 0}
         <p class="muted">실시간 기록은 이 창에서 시작한 요청에만 보입니다. 지난 요청은 표와 보고서를 보세요.</p>
@@ -161,4 +190,13 @@
   .dh { color: var(--blue); }
   .err { color: var(--red); }
   .answer { white-space: pre-wrap; line-height: 1.65; font-size: 14px; }
+  .msg { border-left: 3px solid var(--border); padding: 6px 12px; margin-bottom: 10px; }
+  .msg.sys { border-left-color: var(--accent); }
+  .mh { font-size: 13px; }
+  .mc { margin-top: 4px; line-height: 1.5; }
+  .ml { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin-left: 4px; }
+  .kind { font-size: 11px; border: 1px solid var(--border); border-radius: 8px; padding: 1px 6px; margin: 0 4px; }
+  .k-critique, .k-rebuttal { color: var(--accent); }
+  .k-verdict { color: var(--blue); }
+  .k-conclusion { color: var(--green); }
 </style>

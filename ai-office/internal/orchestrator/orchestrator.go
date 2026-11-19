@@ -49,21 +49,27 @@ type Config struct {
 	ProjectNotes string `json:"project_notes,omitempty"`
 	// Panels hold meetings instead of single employees: "review" (QA review
 	// stage and the audit mode) is a cross-review when it has 2+ members.
-	Panels map[string][]Agent `json:"panels,omitempty"`
+	// "plan" (planning in plan and team modes) is a draft-critique meeting
+	// and "meeting" (meeting mode) a discussion, both with 2+ members.
+	Panels        map[string][]Agent `json:"panels,omitempty"`
+	MeetingRounds int                `json:"meeting_rounds,omitempty"` // default 2
 }
 
 // Modes.
 const (
-	ModeAsk    = "ask"    // answer a question about the project
-	ModePlan   = "plan"   // PM writes a plan / spec, no code
-	ModeAudit  = "audit"  // QA reviews the current code, no changes
-	ModeSolo   = "solo"   // developer alone
-	ModeTeam   = "team"   // PM + developer + checks
-	ModeReview = "review" // team + QA reviewer
+	ModeAsk     = "ask"     // answer a question about the project
+	ModePlan    = "plan"    // PM writes a plan / spec, no code
+	ModeAudit   = "audit"   // QA reviews the current code, no changes
+	ModeSolo    = "solo"    // developer alone
+	ModeTeam    = "team"    // PM + developer + checks
+	ModeReview  = "review"  // team + QA reviewer
+	ModeMeeting = "meeting" // several employees discuss, a moderator concludes
 )
 
 // ReadOnly reports whether a mode only reads the project (no worktree, no branch).
-func ReadOnly(mode string) bool { return mode == ModeAsk || mode == ModePlan || mode == ModeAudit }
+func ReadOnly(mode string) bool {
+	return mode == ModeAsk || mode == ModePlan || mode == ModeAudit || mode == ModeMeeting
+}
 
 func (c *Config) mode() string {
 	if c.Mode != "" {
@@ -297,7 +303,12 @@ func (r *run) plan(ctx context.Context) (*plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := r.runTask(ctx, taskID, "pm", r.cfg.PMModel, pmPrompt(r.cfg.Request), pmSystemPrompt(r.cfg.Checks, r.cfg.Protect), planSchema)
+	var res engine.Result
+	if panel := r.cfg.Panels["plan"]; len(panel) >= 2 {
+		res, err = r.draftCritique(ctx, panel, "기획 회의", pmPrompt(r.cfg.Request), pmSystemPrompt(r.cfg.Checks, r.cfg.Protect), planSchema)
+	} else {
+		res, err = r.runTask(ctx, taskID, "pm", r.cfg.PMModel, pmPrompt(r.cfg.Request), pmSystemPrompt(r.cfg.Checks, r.cfg.Protect), planSchema)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -400,6 +411,11 @@ func (r *run) runAgent(ctx context.Context, taskID int64, role string, ag Agent,
 		return res, ctx.Err()
 	default:
 		note := fmt.Sprintf("engine %s (%s)", res.Status, res.Subtype)
+		if res.Status == engine.StatusLimited {
+			note = "AI 계정 사용 한도에 도달: " + oneLine(res.Text, 200)
+		} else if res.Status == engine.StatusError && strings.TrimSpace(res.Text) != "" {
+			note = "engine error: " + oneLine(res.Text, 200)
+		}
 		st.SetTaskStatus(taskID, store.Failed, note)
 		return res, errors.New(note)
 	}
@@ -459,6 +475,24 @@ func (r *run) answer(ctx context.Context) (string, string) {
 	case ModeAudit:
 		role, title, system = "qa", "코드 검토", auditSystemPrompt()
 	}
+	if r.cfg.Mode == ModeMeeting {
+		panel := r.cfg.Panels["meeting"]
+		if len(panel) < 2 {
+			return store.ReqFailed, "회의에는 2명 이상이 필요합니다"
+		}
+		md, err := r.discussion(ctx, panel, "결정할 문제:\n"+r.cfg.Request)
+		if err != nil {
+			return store.ReqFailed, err.Error()
+		}
+		return r.saveAnswer("pm", "회의 결론", md)
+	}
+	if panel := r.cfg.Panels["plan"]; r.cfg.Mode == ModePlan && len(panel) >= 2 {
+		res, err := r.draftCritique(ctx, panel, "기획 회의", "사용자 요청:\n"+r.cfg.Request, planDocSystemPrompt(), "")
+		if err != nil {
+			return store.ReqFailed, err.Error()
+		}
+		return r.saveAnswer("pm", "기획서(회의)", res.Text)
+	}
 	if panel := r.cfg.Panels["review"]; r.cfg.Mode == ModeAudit && len(panel) >= 1 {
 		cr, err := r.crossReview(ctx, panel, "교차 검토", "사용자 요청(검토 범위):\n"+r.cfg.Request, auditPanelSystemPrompt())
 		if err != nil {
@@ -489,6 +523,18 @@ func (r *run) answer(ctx context.Context) (string, string) {
 	r.o.Store.SetTaskStatus(taskID, store.Completed, "")
 	os.WriteFile(filepath.Join(r.dir, "answer.md"), []byte(res.Text), 0o644)
 	r.o.log(role, fmt.Sprintf("answer written (%d chars)", len([]rune(res.Text))))
+	return store.ReqDone, ""
+}
+
+// saveAnswer records the result of a read-only meeting as the request's answer.
+func (r *run) saveAnswer(role, title, text string) (string, string) {
+	taskID, err := r.o.Store.AddTask(r.id, 300, "answer", role, title, r.cfg.Request)
+	if err != nil {
+		return store.ReqFailed, err.Error()
+	}
+	r.o.Store.SetTaskResult(taskID, 0, text)
+	r.o.Store.SetTaskStatus(taskID, store.Completed, "")
+	os.WriteFile(filepath.Join(r.dir, "answer.md"), []byte(text), 0o644)
 	return store.ReqDone, ""
 }
 

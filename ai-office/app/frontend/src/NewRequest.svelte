@@ -14,6 +14,21 @@
   let request = $state('')
   let mode = $state('review')
   let budget = $state(2)
+  // Meetings: stage -> employee ids in speaking order (first = author / moderator).
+  let panels = $state<Record<string, number[]>>({ plan: [], review: [], meeting: [] })
+  let useMeeting = $state<Record<string, boolean>>({ plan: false, review: false, meeting: true })
+  let rounds = $state(2)
+  const stageInfo: Record<string, { title: string; how: string; first: string }> = {
+    plan: { title: '기획 회의', how: '첫 번째 사람이 초안을 쓰고, 나머지가 비판하면 고칩니다. 모두 승인하거나 라운드가 끝나면 종료', first: '초안 작성' },
+    review: { title: 'QA 교차 검토', how: '각자 따로 검토한 뒤 서로의 지적을 확인해서, 과반이 맞다고 한 지적만 남깁니다', first: '' },
+    meeting: { title: '회의', how: '각자 입장을 낸 뒤 서로 반박하고, 첫 번째 사람이 사회자로 결론을 정리합니다', first: '사회' },
+  }
+  const stagesFor: Record<string, string[]> = { plan: ['plan'], audit: ['review'], team: ['plan'], review: ['plan', 'review'], meeting: ['meeting'] }
+  let stages = $derived(stagesFor[mode] ?? [])
+  function toggleMember(stage: string, id: number) {
+    const cur = panels[stage]
+    panels[stage] = cur.includes(id) ? cur.filter((x) => x !== id) : cur.length >= 4 ? cur : [...cur, id]
+  }
   let fixRounds = $state(3)
   let busy = $state(false)
   let error = $state('')
@@ -23,6 +38,7 @@
     { v: 'ask', name: '질문하기', desc: '프로젝트 코드를 읽고 질문에 답합니다', slots: ['ask'] },
     { v: 'plan', name: '기획만', desc: 'PM이 현재 구조에 맞춘 기획서를 씁니다', slots: ['pm'] },
     { v: 'audit', name: '검토만', desc: 'QA가 지금 코드의 결함을 찾아 보고합니다', slots: ['qa'] },
+    { v: 'meeting', name: '회의', desc: '여러 직원이 입장을 내고 반박한 뒤 사회자가 결론을 냅니다', slots: [] },
   ]
   const codeModes: Mode[] = [
     { v: 'solo', name: '혼자 개발', desc: '개발자 한 명이 요청 전체를 수행', slots: ['dev'] },
@@ -53,7 +69,9 @@
     error = ''
     busy = true
     try {
-      const id = await Start({ projectId, request, mode, team, budgetUsd: Number(budget), fixRounds: Number(fixRounds) } as any)
+      const chosen: Record<string, number[]> = {}
+      for (const st of stages) if (useMeeting[st] || st === 'meeting') chosen[st] = panels[st]
+      const id = await Start({ projectId, request, mode, team, panels: chosen, rounds: Number(rounds), budgetUsd: Number(budget), fixRounds: Number(fixRounds) } as any)
       request = ''
       onstarted(id)
     } catch (e) {
@@ -98,7 +116,7 @@
   {/each}
 </div>
 
-<span class="lbl">참여 직원 <button class="link" onclick={onemployees}>직원 관리</button></span>
+{#if current.slots.length}<span class="lbl">참여 직원 <button class="link" onclick={onemployees}>직원 관리</button></span>{/if}
 <div class="slots">
   {#each current.slots as slot (slot)}
     <div>
@@ -114,7 +132,35 @@
   {/each}
 </div>
 
+{#each stages as st (st)}
+  <div class="meeting">
+    {#if st !== 'meeting'}
+      <label class="check"><input type="checkbox" bind:checked={useMeeting[st]} /> <b>{stageInfo[st].title}</b>로 진행</label>
+    {:else}
+      <b>{stageInfo[st].title} 참석자</b>
+    {/if}
+    <p class="small">{stageInfo[st].how}</p>
+    {#if st === 'meeting' || useMeeting[st]}
+      <div class="chips">
+        {#each staff as e}
+          {@const n = panels[st].indexOf(e.id)}
+          <button class="chip" class:on={n >= 0} onclick={() => toggleMember(st, e.id)}>
+            {#if n >= 0}<span class="num">{n + 1}</span>{/if}{e.name} · {e.model}{n === 0 && stageInfo[st].first ? ' · ' + stageInfo[st].first : ''}
+          </button>
+        {/each}
+      </div>
+      <p class="small">{panels[st].length}명 선택 (2~4명, 누른 순서대로)</p>
+    {/if}
+  </div>
+{/each}
+
 <div class="slots">
+  {#if stages.some((st) => (st === 'meeting' || useMeeting[st]) && st !== 'review')}
+    <div>
+      <label for="rounds">회의 라운드</label>
+      <input id="rounds" type="number" min="1" max="4" bind:value={rounds} />
+    </div>
+  {/if}
   <div>
     <label for="budget">예산 (요청 전체, USD)</label>
     <input id="budget" type="number" min="0.1" step="0.5" bind:value={budget} />
@@ -137,7 +183,14 @@
   .lbl { display: block; color: var(--muted); font-size: 12px; margin: 16px 0 6px; }
   .group { color: var(--muted); font-size: 12px; margin: 10px 0 6px; }
   .small { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
-  .modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+  .meeting { margin-top: 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .check { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 14px; margin: 0; }
+  .check input { width: auto; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip { font-size: 12px; padding: 5px 10px; border-radius: 14px; }
+  .chip.on { border-color: var(--accent); background: rgba(232, 135, 95, .12); }
+  .num { display: inline-block; background: var(--accent); color: #111; border-radius: 8px; padding: 0 6px; margin-right: 6px; font-weight: 700; }
   .mode { text-align: left; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
   .mode span { color: var(--muted); font-size: 12px; line-height: 1.4; }
   .mode.on { border-color: var(--accent); background: rgba(232, 135, 95, .1); }

@@ -81,6 +81,7 @@ const (
 	StatusCrashed   Status = "crashed"   // process ended without a result
 	StatusTimeout   Status = "timeout"   // killed by Spec.Timeout
 	StatusCancelled Status = "cancelled" // killed because ctx was cancelled
+	StatusLimited   Status = "limited"   // the account's usage limit was reached (HTTP 429); Text says when it resets
 )
 
 // Engine runs a Spec. onEvent is called from the Run goroutine, in order.
