@@ -104,3 +104,23 @@ func TestEngineRefusesWriting(t *testing.T) {
 		t.Error("developer (write) work accepted")
 	}
 }
+
+// A bare file name is found inside the project when it is unique (bug 014:
+// llama3.1 kept asking for "GameManager.cs" that lives in a subfolder).
+func TestReadFileByNameOnly(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "Game", "Scripts"), 0o755)
+	os.MkdirAll(filepath.Join(root, "Tools"), 0o755)
+	os.WriteFile(filepath.Join(root, "Game", "Scripts", "GameManager.cs"), []byte("class GameManager {}\n"), 0o644)
+	out, _, err := runTool(root, "read_file", map[string]any{"path": "GameManager.cs"})
+	if err != nil || !strings.Contains(out, "경로 보정") || !strings.Contains(out, "class GameManager") {
+		t.Errorf("unique name: %q %v", out, err)
+	}
+	os.WriteFile(filepath.Join(root, "Tools", "GameManager.cs"), []byte("x\n"), 0o644)
+	if _, _, err := runTool(root, "read_file", map[string]any{"path": "GameManager.cs"}); err == nil || !strings.Contains(err.Error(), "Tools/GameManager.cs") {
+		t.Errorf("two candidates should be listed: %v", err)
+	}
+	if _, _, err := runTool(root, "read_file", map[string]any{"path": "Nope.cs"}); err == nil {
+		t.Error("missing file accepted")
+	}
+}

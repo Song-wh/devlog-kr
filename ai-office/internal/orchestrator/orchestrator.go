@@ -399,7 +399,7 @@ func (r *run) runAgent(ctx context.Context, taskID int64, role string, ag Agent,
 		case engine.EventToolUse:
 			r.o.log(speaker, fmt.Sprintf("%-6s %s", ev.Tool, rel(r.wt.Dir, ev.Target)))
 		case engine.EventToolError:
-			r.o.log(speaker, "DENIED/ERROR "+oneLine(ev.Text, 140))
+			r.o.log(speaker, "도구 오류: "+oneLine(ev.Text, 140))
 		}
 	})
 	if ag.Local {

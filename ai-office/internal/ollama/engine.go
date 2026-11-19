@@ -198,7 +198,13 @@ func (e *Engine) Run(ctx context.Context, spec engine.Spec, onEvent func(engine.
 			message{Role: "user", Content: "위 답을 정해진 JSON 형식으로만 다시 써라. 내용은 바꾸지 말고, 확인한 근거(파일 경로)를 빼지 마라."})
 		r, err := chat(ctx, spec.Model, msgs, false, schema)
 		if err != nil {
-			return fail(err)
+			if ctx.Err() != nil {
+				return fail(err)
+			}
+			// The reshaping step failed or ran away: keep the plain answer;
+			// meetings can still read JSON from text or skip this member.
+			logJSON(map[string]any{"type": "structured", "error": err.Error()})
+			return finish(engine.StatusSuccess, answer)
 		}
 		res.Turns++
 		res.Usage.InputTokens += r.PromptEvalCount
@@ -212,15 +218,30 @@ func (e *Engine) Run(ctx context.Context, spec engine.Spec, onEvent func(engine.
 	return finish(engine.StatusSuccess, answer)
 }
 
+// Limits on one model call. Without an output cap a small model can keep
+// generating (llama3.1 ran 14 minutes on the JSON step), so every call has
+// a token limit and its own time limit.
+const (
+	maxAnswerTokens = 2048
+	maxFormatTokens = 1024
+	callTimeout     = 4 * time.Minute
+	formatTimeout   = 2 * time.Minute
+)
+
 func chat(ctx context.Context, model string, msgs []message, withTools bool, format map[string]any) (*chatResponse, error) {
-	body := map[string]any{"model": model, "messages": msgs, "stream": false,
-		"options": map[string]any{"num_ctx": 16384}}
+	opts := map[string]any{"num_ctx": 16384, "num_predict": maxAnswerTokens}
+	limit := callTimeout
+	body := map[string]any{"model": model, "messages": msgs, "stream": false, "options": opts}
 	if withTools {
 		body["tools"] = tools
 	}
 	if format != nil {
 		body["format"] = format
+		opts["num_predict"] = maxFormatTokens
+		limit = formatTimeout
 	}
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
 	b, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, BaseURL()+"/api/chat", bytes.NewReader(b))
 	if err != nil {
@@ -313,14 +334,32 @@ func runTool(root, name string, args map[string]any) (string, string, error) {
 		if err != nil {
 			return "", "Read", err
 		}
+		note := ""
 		b, err := os.ReadFile(full)
 		if err != nil {
-			return "", "Read", fmt.Errorf("읽을 수 없음: %s", str("path"))
+			// Small models often give just the file name. If exactly one file
+			// in the project has that name, read it; otherwise list the
+			// candidates so the next call can get it right.
+			found := findByName(root, filepath.Base(filepath.FromSlash(str("path"))))
+			switch len(found) {
+			case 0:
+				return "", "Read", fmt.Errorf("파일이 없음: %s (list_files로 경로를 확인하라)", str("path"))
+			case 1:
+				if b, err = os.ReadFile(filepath.Join(root, filepath.FromSlash(found[0]))); err != nil {
+					return "", "Read", fmt.Errorf("읽을 수 없음: %s", found[0])
+				}
+				note = fmt.Sprintf("(경로 보정: %s → %s)\n", str("path"), found[0])
+			default:
+				if len(found) > 8 {
+					found = found[:8]
+				}
+				return "", "Read", fmt.Errorf("같은 이름의 파일이 여러 개: %s — 이 중 하나의 전체 경로로 다시 읽어라", strings.Join(found, ", "))
+			}
 		}
 		if !utf8ish(b) {
 			return "", "Read", fmt.Errorf("텍스트 파일이 아님: %s", str("path"))
 		}
-		return numbered(clip(string(b), maxFileBytes)), "Read", nil
+		return note + numbered(clip(string(b), maxFileBytes)), "Read", nil
 	case "list_files":
 		dir, err := inside(root, str("dir"))
 		if err != nil {
@@ -386,6 +425,30 @@ func runTool(root, name string, args map[string]any) (string, string, error) {
 		return strings.Join(hits, "\n"), "Grep", nil
 	}
 	return "", name, fmt.Errorf("없는 도구: %s (read_file, list_files, search_text만 있음)", name)
+}
+
+// findByName lists project files (relative, slash-separated) whose name
+// matches, ignoring case.
+func findByName(root, name string) []string {
+	var out []string
+	if name == "" || name == "." {
+		return nil
+	}
+	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() && skipDirs[d.Name()] {
+			return filepath.SkipDir
+		}
+		if !d.IsDir() && strings.EqualFold(d.Name(), name) {
+			rel, _ := filepath.Rel(root, p)
+			out = append(out, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	sort.Strings(out)
+	return out
 }
 
 func clip(s string, n int) string {
