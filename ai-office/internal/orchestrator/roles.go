@@ -92,9 +92,54 @@ func devPrompt(request string, p *plan, idx int, done []string) string {
 	return b.String()
 }
 
+// reviewSchema is the JSON the reviewer must return.
+const reviewSchema = `{"type":"object","properties":{` +
+	`"approved":{"type":"boolean"},` +
+	`"summary":{"type":"string"},` +
+	`"issues":{"type":"array","items":{"type":"object","properties":{` +
+	`"file":{"type":"string"},"problem":{"type":"string"},"fix":{"type":"string"}` +
+	`},"required":["file","problem","fix"]}}` +
+	`},"required":["approved","summary","issues"]}`
+
+type review struct {
+	Approved bool          `json:"approved"`
+	Summary  string        `json:"summary"`
+	Issues   []reviewIssue `json:"issues"`
+}
+
+type reviewIssue struct {
+	File    string `json:"file"`
+	Problem string `json:"problem"`
+	Fix     string `json:"fix"`
+}
+
+func reviewSystemPrompt(checks, protect []string) string {
+	return "너는 소프트웨어 팀의 QA 리뷰어다. 개발자가 바꾼 내용(diff)이 사용자 요청과 저장소의 명세 문서를 실제로 만족하는지 검토한다. " +
+		"파일은 절대 고치지 않는다. 필요하면 저장소 파일(명세, 관련 코드)을 읽어서 확인한다.\n\n" +
+		teamRules(checks, protect) + "\n" +
+		"검토 규칙:\n" +
+		"- 자동 검사는 이미 통과했다. 검사가 잡지 못하는 결함을 찾는다: 요청·명세의 요구사항 누락, 경계 조건 위반, 잘못된 동작.\n" +
+		"- 코드 스타일, 이름, 주석, 취향 문제는 지적하지 않는다. 확실한 결함만 issues에 넣는다.\n" +
+		"- 각 issue에는 어느 파일의 무엇이 왜 틀렸는지(가능하면 명세의 해당 문장이나 반례 입력)와 고치는 방법을 쓴다.\n" +
+		"- 결함이 없으면 approved=true, issues는 빈 배열. 모든 문장은 한국어."
+}
+
+func reviewPrompt(request, diff string) string {
+	return "사용자 요청:\n" + request + "\n\n개발자가 바꾼 내용(git diff):\n```diff\n" + diff + "\n```"
+}
+
+func (rv *review) failures() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "QA 리뷰에서 결함이 발견됐다: %s\n", rv.Summary)
+	for i, is := range rv.Issues {
+		fmt.Fprintf(&b, "%d. [%s] %s\n   고칠 방법: %s\n", i+1, is.File, is.Problem, is.Fix)
+	}
+	return b.String()
+}
+
 func fixPrompt(request string, round int, failures string) string {
-	return fmt.Sprintf("사용자 요청:\n%s\n\n작업을 모두 마쳤지만 시스템 검사가 실패했다(수정 %d회차). "+
-		"아래 실패 내용을 보고 원인을 찾아 코드를 고쳐라. 검사나 테스트를 고쳐서 통과시키지 말고 기능을 고친다.\n\n%s", request, round, failures)
+	return fmt.Sprintf("사용자 요청:\n%s\n\n작업을 모두 마쳤지만 검증에서 문제가 나왔다(수정 %d회차). "+
+		"아래 내용을 보고 원인을 찾아 코드를 고쳐라. 검사나 테스트를 고쳐서 통과시키지 말고 기능을 고친다.\n\n%s", request, round, failures)
 }
 
 func oneLine(s string, max int) string {

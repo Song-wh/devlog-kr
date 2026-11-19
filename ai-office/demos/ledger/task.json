@@ -1,0 +1,9 @@
+{
+  "request": "SPEC.md 명세대로 ledger.go의 Parse, Balances, Monthly, FormatCents를 구현해줘. 명세의 모든 경계 조건(따옴표 칸, 여러 줄 메모와 줄 번호, 금액 형식, 윤년, 헤더, 빈 줄)을 지켜야 해.",
+  "checks": ["go test ./...", "go vet ./..."],
+  "protect": ["*_test.go"],
+  "grade": {
+    "files": "hidden",
+    "command": "go test -v ./..."
+  }
+}

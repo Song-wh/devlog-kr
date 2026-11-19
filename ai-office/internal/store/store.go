@@ -105,7 +105,38 @@ CREATE TABLE IF NOT EXISTS checks (
 	log_path      TEXT NOT NULL,
 	at            TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS bench_runs (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	bench_id      TEXT NOT NULL,
+	task          TEXT NOT NULL,
+	request_id    TEXT NOT NULL REFERENCES requests(id),
+	mode          TEXT NOT NULL,          -- team / solo
+	model         TEXT NOT NULL,
+	rep           INTEGER NOT NULL,
+	graded        INTEGER NOT NULL,       -- 1 if the hidden grading command ran
+	grade_passed  INTEGER NOT NULL,       -- hidden grading command exit 0
+	tests_passed  INTEGER NOT NULL,
+	tests_failed  INTEGER NOT NULL,
+	grade_log     TEXT NOT NULL,
+	at            TEXT NOT NULL
+);
 `
+
+// BenchRun is one graded repetition of a benchmark.
+type BenchRun struct {
+	BenchID, Task, RequestID, Mode, Model string
+	Rep                                   int
+	Graded, GradePassed                   bool
+	TestsPassed, TestsFailed              int
+	GradeLog                              string
+}
+
+func (s *Store) AddBenchRun(b BenchRun) error {
+	_, err := s.db.Exec(`INSERT INTO bench_runs(bench_id, task, request_id, mode, model, rep, graded, grade_passed, tests_passed, tests_failed, grade_log, at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, b.BenchID, b.Task, b.RequestID, b.Mode, b.Model, b.Rep, b.Graded, b.GradePassed,
+		b.TestsPassed, b.TestsFailed, b.GradeLog, now())
+	return err
+}
 
 // Store wraps the database.
 type Store struct{ db *sql.DB }

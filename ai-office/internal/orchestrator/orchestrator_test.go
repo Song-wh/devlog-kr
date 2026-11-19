@@ -13,11 +13,14 @@ import (
 	"github.com/Song-wh/devlog-kr/ai-office/internal/store"
 )
 
-// fakeEngine plays the PM and the developer from a script.
+// fakeEngine plays the PM, the developer and the reviewer from a script.
 type fakeEngine struct {
-	t     *testing.T
-	calls []engine.Spec
-	dev   []func(dir string) // one per developer call, in order
+	t       *testing.T
+	calls   []engine.Spec
+	dev     []func(dir string) // one per developer call, in order
+	reviews []review           // one per review call; approve when exhausted
+	devN    int
+	revN    int
 }
 
 func (f *fakeEngine) Name() string { return "fake" }
@@ -25,20 +28,70 @@ func (f *fakeEngine) Name() string { return "fake" }
 func (f *fakeEngine) Run(ctx context.Context, s engine.Spec, on func(engine.Event)) (engine.Result, error) {
 	f.calls = append(f.calls, s)
 	res := engine.Result{Status: engine.StatusSuccess, Usage: engine.Usage{CostUSD: 0.10}}
-	if s.JSONSchema != "" { // PM
+	switch {
+	case strings.Contains(s.JSONSchema, `"approved"`): // QA reviewer
+		rv := review{Approved: true, Summary: "ok", Issues: []reviewIssue{}}
+		if f.revN < len(f.reviews) {
+			rv = f.reviews[f.revN]
+		}
+		f.revN++
+		res.Structured, _ = json.Marshal(rv)
+		return res, nil
+	case s.JSONSchema != "": // PM
 		res.Structured, _ = json.Marshal(plan{Summary: "두 단계", Tasks: []planTask{
 			{Title: "a 만들기", Instructions: "a.txt", Files: []string{"a.txt"}},
 			{Title: "b 만들기", Instructions: "b.txt", Files: []string{"b.txt"}},
 		}})
 		return res, nil
 	}
-	i := len(f.calls) - 2 // calls after the PM
-	if i >= len(f.dev) {
-		f.t.Fatalf("unexpected developer call %d", i)
+	if f.devN >= len(f.dev) {
+		f.t.Fatalf("unexpected developer call %d", f.devN)
 	}
-	f.dev[i](s.Dir)
+	f.dev[f.devN](s.Dir)
+	f.devN++
 	res.Text = "did it"
 	return res, nil
+}
+
+// Checks pass, but the reviewer finds a defect once; the developer fixes it
+// and the second review approves.
+func TestReviewRejectsThenApproves(t *testing.T) {
+	repo := newRepo(t)
+	data := t.TempDir()
+	st, _ := store.Open(filepath.Join(data, "aio.db"))
+	defer st.Close()
+	fe := &fakeEngine{t: t,
+		dev: []func(string){
+			func(d string) { write(t, d, "a.txt", "a\n") },
+			func(d string) { write(t, d, "b.txt", "b\n") },
+			func(d string) { write(t, d, "b.txt", "b fixed\n") },
+		},
+		reviews: []review{{Approved: false, Summary: "b가 명세와 다름", Issues: []reviewIssue{{File: "b.txt", Problem: "fixed가 빠짐", Fix: "fixed 추가"}}}},
+	}
+	o := &Orchestrator{Engine: fe, Store: st, DataDir: data}
+	out, err := o.Run(context.Background(), Config{Repo: repo, Request: "x", MaxFixRounds: 2, BudgetUSD: 5,
+		Checks: []string{"findstr b b.txt"}, Review: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != store.ReqDone {
+		t.Fatalf("status %s (%s)", out.Status, out.Reason)
+	}
+	if fe.revN != 2 || fe.devN != 3 {
+		t.Errorf("reviews %d, dev calls %d", fe.revN, fe.devN)
+	}
+	// The reviewer only reads, and its issues reach the developer.
+	for _, c := range fe.calls {
+		if strings.Contains(c.JSONSchema, `"approved"`) && strings.Join(c.Tools, ",") != "Read,Glob,Grep" {
+			t.Errorf("reviewer tools %v", c.Tools)
+		}
+	}
+	if fix := fe.calls[4].Prompt; !strings.Contains(fix, "fixed가 빠짐") {
+		t.Errorf("fix prompt lacks review issue:\n%s", fix)
+	}
+	if b, _ := os.ReadFile(filepath.Join(out.Worktree.Dir, "b.txt")); strings.TrimSpace(string(b)) != "b fixed" {
+		t.Errorf("b.txt = %q", b)
+	}
 }
 
 func write(t *testing.T, dir, name, content string) {

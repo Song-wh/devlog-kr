@@ -32,7 +32,9 @@ type Config struct {
 	BudgetUSD    float64       `json:"budget_usd"`     // whole request; runs stop when spent
 	TaskTimeout  time.Duration `json:"task_timeout"`
 	CheckTimeout time.Duration `json:"check_timeout"`
-	Solo         bool          `json:"solo"` // skip the PM: one task = the request itself
+	Solo         bool          `json:"solo"`     // skip the PM: one task = the request itself
+	Review       bool          `json:"review"`   // after checks pass, a QA agent reviews the diff (team mode only)
+	QAModel      string        `json:"qa_model"` // engine model for the reviewer (default: DevModel)
 }
 
 // Logger receives progress lines for display.
@@ -139,11 +141,16 @@ func (r *run) execute(ctx context.Context) (string, string) {
 		if err != nil {
 			return store.ReqFailed, err.Error()
 		}
+		if failures == "" && r.cfg.Review && !r.cfg.Solo {
+			if failures, err = r.review(ctx, round); err != nil {
+				return store.ReqFailed, "review: " + err.Error()
+			}
+		}
 		if failures == "" {
 			return store.ReqDone, ""
 		}
 		if round >= r.cfg.MaxFixRounds {
-			return store.ReqFailed, fmt.Sprintf("checks still failing after %d fix round(s)", round)
+			return store.ReqFailed, fmt.Sprintf("verification still failing after %d fix round(s)", round)
 		}
 		taskID, err := r.o.Store.AddTask(r.id, len(p.Tasks)+round+1, "fix", "dev",
 			fmt.Sprintf("검사 실패 수정 %d회차", round+1), failures)
@@ -208,8 +215,8 @@ func (r *run) runTask(ctx context.Context, taskID int64, role, model, prompt, sy
 		Prompt: prompt, Dir: r.wt.Dir, Model: model, MaxBudgetUSD: remaining,
 		Timeout: r.cfg.TaskTimeout, LogDir: logDir, SystemPrompt: system, JSONSchema: schema,
 	}
-	if role == "pm" {
-		spec.Tools = []string{"Read", "Glob", "Grep"} // the PM only reads
+	if role == "pm" || role == "qa" {
+		spec.Tools = []string{"Read", "Glob", "Grep"} // planners and reviewers only read
 	}
 	start := time.Now()
 	res, runErr := r.o.Engine.Run(ctx, spec, func(ev engine.Event) {
@@ -287,6 +294,49 @@ func (r *run) verify(ctx context.Context, round int) (string, error) {
 		r.o.log("qa", fmt.Sprintf("check %s (%.1fs): %s", state, res.Duration.Seconds(), cmd))
 	}
 	return strings.Join(fails, "\n\n"), nil
+}
+
+// maxReviewDiff caps the diff sent to the reviewer; it can read files itself.
+const maxReviewDiff = 40000
+
+// review asks the QA agent to judge the diff against the request.
+// Returns "" when approved, otherwise the issues for the developer.
+func (r *run) review(ctx context.Context, round int) (string, error) {
+	diff, err := r.wt.Diff()
+	if err != nil {
+		return "", err
+	}
+	if len(diff) > maxReviewDiff {
+		diff = diff[:maxReviewDiff] + "\n... (diff truncated; read the files for the rest)"
+	}
+	model := r.cfg.QAModel
+	if model == "" {
+		model = r.cfg.DevModel
+	}
+	taskID, err := r.o.Store.AddTask(r.id, 100+round, "review", "qa", fmt.Sprintf("QA 리뷰 %d회차", round+1), "")
+	if err != nil {
+		return "", err
+	}
+	res, err := r.runTask(ctx, taskID, "qa", model, reviewPrompt(r.cfg.Request, diff), reviewSystemPrompt(r.cfg.Checks, r.cfg.Protect), reviewSchema)
+	if err != nil {
+		return "", err
+	}
+	var rv review
+	if err := json.Unmarshal(res.Structured, &rv); err != nil {
+		r.o.Store.SetTaskStatus(taskID, store.Failed, "review was not valid JSON")
+		return "", fmt.Errorf("reviewer did not return a valid review: %v", err)
+	}
+	if rv.Approved && len(rv.Issues) == 0 {
+		r.o.Store.SetTaskStatus(taskID, store.Completed, "approved")
+		r.o.log("qa", "review APPROVED: "+oneLine(rv.Summary, 140))
+		return "", nil
+	}
+	r.o.Store.SetTaskStatus(taskID, store.Completed, fmt.Sprintf("%d issue(s)", len(rv.Issues)))
+	r.o.log("qa", fmt.Sprintf("review: %d issue(s): %s", len(rv.Issues), oneLine(rv.Summary, 140)))
+	for _, is := range rv.Issues {
+		r.o.log("qa", "  - "+is.File+": "+oneLine(is.Problem, 120))
+	}
+	return rv.failures(), nil
 }
 
 // commit records the team's work on the request branch so it can be

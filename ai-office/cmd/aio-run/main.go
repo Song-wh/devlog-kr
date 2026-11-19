@@ -44,6 +44,8 @@ func run() int {
 		taskTO      = flag.Duration("task-timeout", 10*time.Minute, "max time per agent run")
 		checkTO     = flag.Duration("check-timeout", 5*time.Minute, "max time per check")
 		solo        = flag.Bool("solo", false, "no PM: the developer gets the request as one task")
+		reviewFlag  = flag.Bool("review", true, "after checks pass, a QA agent reviews the diff (team mode)")
+		qaModel     = flag.String("qa-model", "", "model for the QA reviewer (default: dev model)")
 		dataDir     = flag.String("data", defaultDataDir(), "worktrees, logs and database")
 	)
 	flag.Var(&checks, "check", "check command run in the worktree (repeatable); all must pass")
@@ -97,7 +99,7 @@ func run() int {
 	out, err := o.Run(ctx, orchestrator.Config{
 		Repo: *repo, Request: text, Checks: checks, Protect: protect,
 		PMModel: *pmModel, DevModel: *devModel, MaxFixRounds: *fixRounds, BudgetUSD: *budget,
-		TaskTimeout: *taskTO, CheckTimeout: *checkTO, Solo: *solo,
+		TaskTimeout: *taskTO, CheckTimeout: *checkTO, Solo: *solo, Review: *reviewFlag, QAModel: *qaModel,
 	})
 	if err != nil {
 		return fail(err)
