@@ -95,21 +95,34 @@ func draftText(res engine.Result) string {
 
 // draftCritique runs a planning meeting. authorSystem is the author's role;
 // schema (optional) is the draft's JSON format. Returns the final draft.
-func (r *run) draftCritique(ctx context.Context, panel []Agent, title, subject, authorSystem, schema string) (engine.Result, error) {
+// If the meeting stops early (budget, usage limit) after a draft exists, the
+// latest draft is returned with a note instead of losing it.
+func (r *run) draftCritique(ctx context.Context, panel []Agent, title, subject, authorSystem, schema string) (engine.Result, string, error) {
 	taskID, err := r.startMeeting("draft-critique", title, subject, panel)
 	if err != nil {
-		return engine.Result{}, err
+		return engine.Result{}, "", err
 	}
 	author, critics := panel[0], panel[1:]
 	model := r.cfg.PMModel
-	fail := func(err error) (engine.Result, error) {
+	fail := func(err error) (engine.Result, string, error) {
 		r.o.Store.SetTaskStatus(taskID, store.Failed, err.Error())
-		return engine.Result{}, err
+		return engine.Result{}, "", err
 	}
 
 	draft, err := r.runAgent(ctx, taskID, "pm", author, model, subject, authorSystem+draftRule, schema, false)
 	if err != nil {
 		return fail(err)
+	}
+	// From here on a draft exists: an early stop keeps it.
+	stopped := func(round int, err error) (engine.Result, string, error) {
+		if ctx.Err() != nil {
+			return fail(err)
+		}
+		note := fmt.Sprintf("회의가 %d라운드에서 멈췄습니다(%s). 아래는 마지막 수정본입니다.", round, oneLine(err.Error(), 160))
+		r.note(taskID, "draft-critique", round, "AI Office", "conclusion", note, map[string]string{"stopped": err.Error()}, 0)
+		r.o.log("meeting", note)
+		r.o.Store.SetTaskStatus(taskID, store.Completed, "중간 종료: 마지막 수정본 사용")
+		return draft, note, nil
 	}
 	r.note(taskID, "draft-critique", 0, author.Name, "draft", oneLine(draftText(draft), 300), map[string]string{"draft": draftText(draft)}, draft.Usage.CostUSD)
 
@@ -132,7 +145,7 @@ func (r *run) draftCritique(ctx context.Context, panel []Agent, title, subject, 
 			return nil
 		})
 		if err != nil {
-			return fail(err)
+			return stopped(round, err)
 		}
 		approved := 0
 		for _, c := range cs {
@@ -147,13 +160,13 @@ func (r *run) draftCritique(ctx context.Context, panel []Agent, title, subject, 
 		revised, err := r.runAgent(ctx, taskID, "pm", author, model, revisePrompt(subject, draftText(draft), critics, cs),
 			authorSystem+reviseRule, schema, false)
 		if err != nil {
-			return fail(err)
+			return stopped(round, err)
 		}
 		draft = revised
 		r.note(taskID, "draft-critique", round, author.Name, "revision", oneLine(draftText(draft), 300), map[string]string{"draft": draftText(draft)}, draft.Usage.CostUSD)
 	}
 	r.o.Store.SetTaskStatus(taskID, store.Completed, "")
-	return draft, nil
+	return draft, "", nil
 }
 
 // discussion runs a meeting where members state and defend positions; the
@@ -191,6 +204,12 @@ func (r *run) discussion(ctx context.Context, panel []Agent, subject string) (st
 			r.o.Store.SetTaskStatus(taskID, store.Failed, err.Error())
 			return "", err
 		}
+		agreed := round > 1
+		for _, p := range latest {
+			if p.Changed || len(p.Disagree) > 0 {
+				agreed = false
+			}
+		}
 		fmt.Fprintf(&transcript, "\n### %d라운드\n", round)
 		for i, ag := range panel {
 			p := latest[i]
@@ -202,6 +221,15 @@ func (r *run) discussion(ctx context.Context, panel []Agent, subject string) (st
 				fmt.Fprintf(&transcript, "\n  - %s에게 반대: %s", d.Name, d.Why)
 			}
 			transcript.WriteString("\n")
+		}
+		if agreed && round < r.rounds() {
+			// Nobody changed their mind and nobody objects: more rounds would
+			// only restate the same positions.
+			note := fmt.Sprintf("%d라운드에서 모두 입장을 유지하고 반대가 없어 회의를 마칩니다.", round)
+			r.note(taskID, "discussion", round, "AI Office", "conclusion", note, map[string]int{"stopped_at": round}, 0)
+			r.o.log("meeting", note)
+			transcript.WriteString("\n(" + note + ")\n")
+			break
 		}
 	}
 	mod := panel[0]
@@ -259,7 +287,10 @@ func revisePrompt(subject, draft string, critics []Agent, cs []critique) string 
 func critiqueSystemPrompt() string {
 	return readOnlyRule + "너는 기획 회의의 검토자다. 다른 직원이 쓴 기획 초안을 사용자 요청과 실제 코드에 비추어 비판한다. " +
 		"빠진 요구사항, 실제 코드와 맞지 않는 가정, 작업 순서·완료 조건의 문제, 더 단순한 방법이 있는지 본다. " +
-		"사소한 표현 문제는 지적하지 않는다. 고칠 것이 없으면 approve=true, points는 비운다."
+		"사소한 표현 문제는 지적하지 않는다.\n" +
+		"승인 기준: 틀린 사실, 빠진 핵심 요구사항, 실행할 수 없는 작업처럼 결정적인 결함이 남아 있을 때만 approve=false. " +
+		"남은 지적이 개선 제안이나 취향 수준이면 approve=true로 하고 그 제안은 points에 남긴다(작성자가 참고만 한다). " +
+		"지난 비판이 반영되었는지 먼저 확인한다."
 }
 
 func discussionSystemPrompt(round int, name string) string {

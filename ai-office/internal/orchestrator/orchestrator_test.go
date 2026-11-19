@@ -187,7 +187,7 @@ func TestBudgetStopsTheTeam(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Status != store.ReqFailed || !strings.Contains(out.Reason, "budget") {
+	if out.Status != store.ReqFailed || !strings.Contains(out.Reason, "예산") {
 		t.Errorf("status %s reason %q", out.Status, out.Reason)
 	}
 	if len(fe.calls) != 2 {

@@ -121,7 +121,7 @@ type Outcome struct {
 	Dir       string // request log directory
 }
 
-var errBudget = errors.New("budget exhausted")
+var errBudget = errors.New("요청 예산을 다 써서 멈춤")
 
 type run struct {
 	o        *Orchestrator
@@ -306,7 +306,7 @@ func (r *run) plan(ctx context.Context) (*plan, error) {
 	}
 	var res engine.Result
 	if panel := r.cfg.Panels["plan"]; len(panel) >= 2 {
-		res, err = r.draftCritique(ctx, panel, "기획 회의", pmPrompt(r.cfg.Request), pmSystemPrompt(r.cfg.Checks, r.cfg.Protect), planSchema)
+		res, _, err = r.draftCritique(ctx, panel, "기획 회의", pmPrompt(r.cfg.Request), pmSystemPrompt(r.cfg.Checks, r.cfg.Protect), planSchema)
 	} else {
 		res, err = r.runTask(ctx, taskID, "pm", r.cfg.PMModel, pmPrompt(r.cfg.Request), pmSystemPrompt(r.cfg.Checks, r.cfg.Protect), planSchema)
 	}
@@ -414,6 +414,8 @@ func (r *run) runAgent(ctx context.Context, taskID int64, role string, ag Agent,
 		note := fmt.Sprintf("engine %s (%s)", res.Status, res.Subtype)
 		if res.Status == engine.StatusLimited {
 			note = "AI 계정 사용 한도에 도달: " + oneLine(res.Text, 200)
+		} else if res.Subtype == "error_max_budget_usd" {
+			note = fmt.Sprintf("요청 예산 $%.2f를 다 써서 멈춤", r.cfg.BudgetUSD)
 		} else if res.Status == engine.StatusError && strings.TrimSpace(res.Text) != "" {
 			note = "engine error: " + oneLine(res.Text, 200)
 		}
@@ -488,11 +490,19 @@ func (r *run) answer(ctx context.Context) (string, string) {
 		return r.saveAnswer("pm", "회의 결론", md)
 	}
 	if panel := r.cfg.Panels["plan"]; r.cfg.Mode == ModePlan && len(panel) >= 2 {
-		res, err := r.draftCritique(ctx, panel, "기획 회의", "사용자 요청:\n"+r.cfg.Request, planDocSystemPrompt(), "")
+		res, note, err := r.draftCritique(ctx, panel, "기획 회의", "사용자 요청:\n"+r.cfg.Request, planDocSystemPrompt(), "")
 		if err != nil {
 			return store.ReqFailed, err.Error()
 		}
-		return r.saveAnswer("pm", "기획서(회의)", res.Text)
+		text := res.Text
+		if note != "" {
+			text = "> " + note + "\n\n" + text
+		}
+		status, reason := r.saveAnswer("pm", "기획서(회의)", text)
+		if note != "" && reason == "" {
+			reason = note
+		}
+		return status, reason
 	}
 	if panel := r.cfg.Panels["review"]; r.cfg.Mode == ModeAudit && len(panel) >= 1 {
 		cr, err := r.crossReview(ctx, panel, "교차 검토", "사용자 요청(검토 범위):\n"+r.cfg.Request, auditPanelSystemPrompt())
