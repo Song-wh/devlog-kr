@@ -49,7 +49,7 @@ func Status(ctx context.Context, profileDir string) AuthStatus {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, exe, "auth", "status")
+	cmd := proc.NoWindow(exec.CommandContext(ctx, exe, "auth", "status"))
 	if profileDir != "" {
 		cmd.Env = ProfileEnv(profileDir)
 	}
@@ -166,7 +166,7 @@ func Logout(profileDir string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(exe, "auth", "logout")
+	cmd := proc.NoWindow(exec.Command(exe, "auth", "logout"))
 	cmd.Env = ProfileEnv(profileDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))

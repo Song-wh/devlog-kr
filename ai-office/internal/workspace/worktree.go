@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/song-circle/devlog-kr/ai-office/internal/proc"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,7 +28,7 @@ type Change struct {
 }
 
 func git(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd := proc.NoWindow(exec.Command("git", append([]string{"-C", dir}, args...)...))
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb

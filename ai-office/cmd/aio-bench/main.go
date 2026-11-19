@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/song-circle/devlog-kr/ai-office/internal/proc"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -179,7 +180,7 @@ func makeRepo(src, dst, gradeDir string) error {
 		{"init", "-q"}, {"add", "-A"},
 		{"-c", "user.name=AI Office", "-c", "user.email=ai-office@localhost", "commit", "-qm", "task start"},
 	} {
-		if out, err := exec.Command("git", append([]string{"-C", dst}, args...)...).CombinedOutput(); err != nil {
+		if out, err := proc.NoWindow(exec.Command("git", append([]string{"-C", dst}, args...)...)).CombinedOutput(); err != nil {
 			return fmt.Errorf("git %v: %v %s", args, err, out)
 		}
 	}

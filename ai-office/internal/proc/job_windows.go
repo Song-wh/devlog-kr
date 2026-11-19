@@ -46,6 +46,7 @@ func (j *Job) Start(cmd *exec.Cmd) error {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.CreationFlags |= windows.CREATE_SUSPENDED | windows.CREATE_NEW_PROCESS_GROUP
+	NoWindow(cmd)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
