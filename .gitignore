@@ -6,3 +6,7 @@ __pycache__/
 bin/
 obj/
 dist/
+
+# Wails app: build settings are source, only build/bin is output
+!ai-office/app/build/
+ai-office/app/build/bin/
