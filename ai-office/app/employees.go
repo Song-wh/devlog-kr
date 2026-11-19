@@ -40,6 +40,7 @@ func (a *App) agentFor(e store.Employee) orchestrator.Agent {
 		// request goes to the local Ollama server.
 		ag.ProfileDir = a.profileDir(e.ID)
 		ag.Env = ollama.Env(e.Model)
+		ag.Local = true
 	}
 	return ag
 }

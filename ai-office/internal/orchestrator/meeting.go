@@ -28,8 +28,9 @@ const findingsSchema = `{"type":"object","properties":{` +
 
 const verdictsSchema = `{"type":"object","properties":{` +
 	`"verdicts":{"type":"array","items":{"type":"object","properties":{` +
-	`"id":{"type":"string"},"verdict":{"type":"string","enum":["valid","invalid","unsure"]},"reason":{"type":"string"}` +
-	`},"required":["id","verdict","reason"]}}` +
+	`"id":{"type":"string"},"verdict":{"type":"string","enum":["valid","invalid","unsure"]},"reason":{"type":"string"},` +
+	`"evidence":{"type":"string"}` +
+	`},"required":["id","verdict","reason","evidence"]}}` +
 	`},"required":["verdicts"]}`
 
 // Finding is one issue raised in a cross-review, with the panel's votes.
@@ -47,10 +48,19 @@ type Finding struct {
 
 // Verdict is one reviewer's judgement of another reviewer's finding.
 type Verdict struct {
-	ID      string `json:"id"`
-	Voter   string `json:"voter,omitempty"`
-	Verdict string `json:"verdict"` // valid / invalid / unsure
-	Reason  string `json:"reason"`
+	ID       string `json:"id"`
+	Voter    string `json:"voter,omitempty"`
+	Verdict  string `json:"verdict"` // valid / invalid / unsure
+	Reason   string `json:"reason"`
+	Evidence string `json:"evidence,omitempty"` // what the voter checked (file:line, spec text)
+	Demoted  bool   `json:"demoted,omitempty"`  // "valid" without evidence, counted as unsure
+}
+
+// hasEvidence reports whether a verdict points at something concrete: a
+// file location or a quoted line, not just agreement.
+func hasEvidence(e string) bool {
+	e = strings.TrimSpace(e)
+	return len([]rune(e)) >= 8 && strings.ContainsAny(e, ":.\"'`(")
 }
 
 type findings struct {
@@ -199,6 +209,11 @@ func (r *run) crossReview(ctx context.Context, panel []Agent, title, subject, fi
 				// Only count votes on others' findings, one per voter.
 				if out.Findings[k].ID == v.ID && out.Findings[k].Author != ag.Name && !hasVoted(out.Findings[k], ag.Name) {
 					v.Voter = ag.Name
+					if v.Verdict == "valid" && !hasEvidence(v.Evidence) {
+						// A bare "yes" is not a check (e004: a reviewer that found
+						// nothing agreed with everything). It counts as unsure.
+						v.Verdict, v.Demoted = "unsure", true
+					}
 					out.Findings[k].Votes = append(out.Findings[k].Votes, v)
 					if v.Verdict == "valid" {
 						valid++
@@ -244,7 +259,8 @@ const crossFindRule = "\n\n이번 회의 규칙(1단계 · 각자 검토): 다�
 
 const crossVerifyRule = "\n\n이번 회의 규칙(2단계 · 교차 확인): 다른 직원들이 낸 지적이 실제 결함인지 하나씩 판정한다. " +
 	"반드시 해당 파일을 직접 읽어 확인한다. 지적이 언어·라이브러리 동작에 대한 주장이면 그 주장이 사실인지 따진다. " +
-	"맞으면 valid, 틀렸으면 invalid(왜 틀렸는지), 확인할 수 없으면 unsure. 모든 지적에 대해 id를 그대로 써서 판정한다."
+	"맞으면 valid, 틀렸으면 invalid(왜 틀렸는지), 확인할 수 없으면 unsure. 모든 지적에 대해 id를 그대로 써서 판정한다. " +
+	"evidence에는 네가 직접 확인한 근거(파일:줄과 그 줄의 내용, 명세 문장)를 쓴다. 근거 없이 valid라고 하면 unsure로 처리된다."
 
 func verifyPrompt(subject string, fs []Finding) string {
 	var b strings.Builder

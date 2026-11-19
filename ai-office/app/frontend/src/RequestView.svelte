@@ -13,6 +13,13 @@
   let tab = $state<'answer' | 'meeting' | 'log' | 'diff' | 'report'>('log')
   let readOnly = $derived(['ask', 'plan', 'audit', 'meeting'].includes(d?.request.mode ?? ''))
   let shownAnswer = false
+  let shownMeeting = false
+  // Who is talking right now: speakers whose latest log line is not "done:".
+  let speaking = $derived.by(() => {
+    const last: Record<string, string> = {}
+    for (const l of live) if (!['system', 'meeting', 'pm', 'dev', 'qa', 'ask'].includes(l.role)) last[l.role] = l.line
+    return Object.entries(last).filter(([, line]) => !line.startsWith('done:')).map(([name]) => name)
+  })
 
   async function load() {
     try {
@@ -21,6 +28,10 @@
       x.checks ??= []
       x.messages ??= []
       d = x
+      if (isRunning && x.messages.length && !shownMeeting) {
+        tab = 'meeting' // watch the meeting while it happens
+        shownMeeting = true
+      }
       if (x.answer && !shownAnswer) {
         tab = 'answer' // jump to the answer once it arrives
         shownAnswer = true
@@ -64,7 +75,7 @@
     try { x = JSON.parse(m.data) } catch { return [] }
     switch (m.kind) {
       case 'finding': return (x.issues ?? []).map((i: any) => `• [${i.severity}] ${i.file}: ${i.problem}`)
-      case 'verdict': return (x.verdicts ?? []).map((v: any) => `• ${v.id} → ${v.verdict === 'valid' ? '맞음' : v.verdict === 'invalid' ? '틀림' : '모름'}: ${v.reason}`)
+      case 'verdict': return (x.verdicts ?? []).map((v: any) => `• ${v.id} → ${v.verdict === 'valid' ? '맞음' : v.verdict === 'invalid' ? '틀림' : '모름'}: ${v.reason}${v.evidence ? ' [근거: ' + v.evidence + ']' : ''}`)
       case 'conclusion': return Array.isArray(x) ? x.map((f: any) => `• ${f.accepted ? '채택' : '기각'} ${f.id} (${f.author}) ${f.problem}`) : []
       case 'critique': return (x.points ?? []).map((p: any) => `• ${p.point} — ${p.suggestion}`)
       case 'opinion': case 'rebuttal':
@@ -136,6 +147,9 @@
     {#if tab === 'answer'}
       {#if d.answer}<div class="answer">{d.answer}</div>{:else}<p class="muted">아직 답변이 없습니다.</p>{/if}
     {:else if tab === 'meeting'}
+      {#if isRunning && speaking.length}
+        <div class="speaking">지금 발언 중: {#each speaking as n}<span class="who">{n}</span>{/each}<span class="dots">…</span></div>
+      {/if}
       {#each d.messages as m (m.id)}
         <div class="msg" class:sys={m.sender === 'AI Office'}>
           <div class="mh"><b>{m.sender}</b> <span class="kind k-{m.kind}">{kindLabel[m.kind] ?? m.kind}</span> <span class="muted">{m.round}라운드{m.costUsd ? ' · $' + m.costUsd.toFixed(3) : ''}</span></div>
@@ -199,4 +213,8 @@
   .k-critique, .k-rebuttal { color: var(--accent); }
   .k-verdict { color: var(--blue); }
   .k-conclusion { color: var(--green); }
+  .speaking { position: sticky; top: -14px; background: var(--panel2); border-radius: 6px; padding: 6px 10px; margin: -4px 0 10px; font-size: 13px; color: var(--muted); }
+  .who { color: var(--accent); font-weight: 600; margin-left: 8px; }
+  .dots { margin-left: 6px; animation: blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity: .2; } }
 </style>

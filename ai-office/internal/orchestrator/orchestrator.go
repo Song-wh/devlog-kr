@@ -91,7 +91,8 @@ type Agent struct {
 	Model      string   `json:"model"`
 	ProfileDir string   `json:"-"` // engine account folder; empty = default login
 	Prompt     string   `json:"prompt,omitempty"`
-	Env        []string `json:"-"` // extra engine environment (local model server)
+	Env        []string `json:"-"`               // extra engine environment (local model server)
+	Local      bool     `json:"local,omitempty"` // runs on this PC (no cost)
 }
 
 // NewID returns a request id: local time to the millisecond, usable in a
@@ -375,15 +376,25 @@ func (r *run) runAgent(ctx context.Context, taskID int64, role string, ag Agent,
 	if role != "dev" || ReadOnly(r.cfg.Mode) {
 		spec.Tools = []string{"Read", "Glob", "Grep"} // planners, reviewers and read-only modes only read
 	}
+	speaker := role
+	if ag.Name != "" && !manageTask {
+		speaker = ag.Name // in meetings, tell the speakers apart
+		r.o.log(speaker, "speaking")
+	}
 	start := time.Now()
 	res, runErr := r.o.Engine.Run(ctx, spec, func(ev engine.Event) {
 		switch ev.Kind {
 		case engine.EventToolUse:
-			r.o.log(role, fmt.Sprintf("%-6s %s", ev.Tool, rel(r.wt.Dir, ev.Target)))
+			r.o.log(speaker, fmt.Sprintf("%-6s %s", ev.Tool, rel(r.wt.Dir, ev.Target)))
 		case engine.EventToolError:
-			r.o.log(role, "DENIED/ERROR "+oneLine(ev.Text, 140))
+			r.o.log(speaker, "DENIED/ERROR "+oneLine(ev.Text, 140))
 		}
 	})
+	if ag.Local {
+		// Ran on this PC: the engine's figure is Anthropic list price times
+		// the local model's tokens, not money anyone pays.
+		res.Usage.CostUSD, res.Usage.CostEstimated = 0, false
+	}
 	st.AddRun(store.Run{
 		RequestID: r.id, TaskID: taskID, Role: role, Engine: r.o.Engine.Name(), Model: model, Status: string(res.Status),
 		Turns: res.Turns, ToolCalls: res.ToolCalls, ToolErrors: res.ToolErrors, Denials: res.Denials,
@@ -392,11 +403,7 @@ func (r *run) runAgent(ctx context.Context, taskID int64, role string, ag Agent,
 		CostUSD: res.Usage.CostUSD, CostEstimated: res.Usage.CostEstimated, Agent: ag.Name,
 		Duration: res.Duration, LogDir: logDir, ResultText: res.Text, StartedAt: start,
 	})
-	who = role
-	if ag.Name != "" && !manageTask {
-		who = ag.Name // in meetings, tell the speakers apart
-	}
-	r.o.log(who, fmt.Sprintf("done: %s, %.0fs, $%.4f", res.Status, res.Duration.Seconds(), res.Usage.CostUSD))
+	r.o.log(speaker, fmt.Sprintf("done: %s, %.0fs, $%.4f", res.Status, res.Duration.Seconds(), res.Usage.CostUSD))
 	if manageTask {
 		st.SetTaskResult(taskID, 1, res.Text)
 	}

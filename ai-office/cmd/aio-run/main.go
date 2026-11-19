@@ -147,6 +147,7 @@ func panels(spec string) map[string][]orchestrator.Agent {
 		if m, ok := strings.CutSuffix(model, "@ollama"); ok {
 			ag.Model = m
 			ag.Env = ollama.Env(m)
+			ag.Local = true
 			ag.ProfileDir = filepath.Join(defaultDataDir(), "profiles", "ollama-"+strings.NewReplacer(":", "_", "/", "_").Replace(m))
 		}
 		p = append(p, ag)

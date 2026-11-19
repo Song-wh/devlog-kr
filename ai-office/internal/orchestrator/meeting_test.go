@@ -47,7 +47,7 @@ func (p *panelEngine) Run(ctx context.Context, s engine.Spec, on func(engine.Eve
 			if strings.Contains(s.Prompt, "["+id+"] (a.go, medium)") {
 				v = "invalid"
 			}
-			vs = append(vs, map[string]string{"id": id, "verdict": v, "reason": "확인함"})
+			vs = append(vs, map[string]string{"id": id, "verdict": v, "reason": "확인함", "evidence": "a.go:10 확인"})
 		}
 		res.Structured, _ = json.Marshal(map[string]any{"verdicts": vs})
 	}
@@ -112,6 +112,14 @@ func TestTallyMajority(t *testing.T) {
 	for i := range got {
 		if got[i] != want[i] {
 			t.Errorf("%s accepted=%v, want %v", fs[i].ID, got[i], want[i])
+		}
+	}
+}
+
+func TestBareYesIsNotEvidence(t *testing.T) {
+	for e, want := range map[string]bool{"": false, "맞음": false, "동의합니다": false, "a.go:10 확인": true, "SPEC.md 14줄 \"1~2자리\"": true} {
+		if got := hasEvidence(e); got != want {
+			t.Errorf("hasEvidence(%q) = %v, want %v", e, got, want)
 		}
 	}
 }
