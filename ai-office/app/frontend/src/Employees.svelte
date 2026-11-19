@@ -1,14 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { CancelLogin, DeleteEmployee, Employees, Login, LoginCode, Logout, Models, SaveEmployee } from '../wailsjs/go/main/App'
+  import { CancelLogin, DeleteEmployee, Employees, Login, LoginCode, Logout, Models, Ollama, SaveEmployee } from '../wailsjs/go/main/App'
   import { EventsOn } from '../wailsjs/runtime/runtime'
   import type { main } from '../wailsjs/go/models'
 
   let list = $state<main.EmployeeView[]>([])
   let models = $state<string[]>([])
+  let local = $state<{ running: boolean; version: string; models: { name: string; sizeGb: number; params: string }[]; error?: string } | null>(null)
   let loading = $state(true)
   let error = $state('')
   let editing = $state<any | null>(null) // employee being edited (copy)
+  let modelChoices = $derived(editing?.connection === 'ollama' ? (local?.models ?? []).map((m) => m.name) : models)
   let loginLines = $state<Record<number, string[]>>({})
   let codes = $state<Record<number, string>>({})
 
@@ -29,6 +31,7 @@
   onMount(() => {
     load()
     Models().then((m) => (models = m ?? []))
+    Ollama().then((s) => (local = s as any))
     const off1 = EventsOn('login', (ev: { id: number; line: string }) => {
       loginLines[ev.id] = [...(loginLines[ev.id] ?? []), ev.line]
     })
@@ -82,6 +85,7 @@
     const s = e.status
     if (e.loggingIn) return '로그인 진행 중…'
     if (s?.error) return '확인 실패: ' + s.error
+    if (e.connection === 'ollama') return s?.loggedIn ? `${s.plan} · ${e.model}` : '사용 불가'
     if (!s?.loggedIn) return '로그인 안 됨'
     const kind = s.authMethod === 'claude.ai' ? `구독${s.plan ? ' (' + s.plan + ')' : ''}` : s.authMethod === 'console' ? 'Console(API 과금)' : s.authMethod
     return `${kind}${s.email ? ' · ' + mask(s.email) : ''}`
@@ -117,7 +121,7 @@
       <div>
         <label for="m">모델</label>
         <input id="m" list="models" bind:value={editing.model} />
-        <datalist id="models">{#each models as m}<option value={m}></option>{/each}</datalist>
+        <datalist id="models">{#each modelChoices as m}<option value={m}></option>{/each}</datalist>
       </div>
     </div>
     <span class="lbl">AI 계정 연결</span>
@@ -131,7 +135,17 @@
       <button class:on={editing.connection === 'own' && editing.authMode === 'console'} onclick={() => { editing.connection = 'own'; editing.authMode = 'console' }}>
         <b>전용 계정 · Console</b><span>Anthropic Console 로그인, API 사용량으로 과금</span>
       </button>
+      <button class:on={editing.connection === 'ollama'} onclick={() => { editing.connection = 'ollama'; if (local?.models?.length && !local.models.some((m) => m.name === editing.model)) editing.model = local.models[0].name }}>
+        <b>Ollama · 이 PC</b><span>이 PC에서 도는 공개 모델. 계정·비용 없음, 코드가 PC 밖으로 나가지 않음</span>
+      </button>
     </div>
+    {#if editing.connection === 'ollama'}
+      <p class="small">
+        {#if !local?.running}Ollama가 실행 중이 아닙니다. Ollama를 켠 뒤 다시 열어 주세요.
+        {:else if !local.models.length}설치된 모델이 없습니다. 터미널에서 <span class="mono">ollama pull qwen3:8b</span> 처럼 받으세요.
+        {:else}설치된 모델: {local.models.map((m) => `${m.name} (${m.params}, ${m.sizeGb.toFixed(1)}GB)`).join(' · ')}{/if}
+      </p>
+    {/if}
     <label for="p">추가 지시 (선택, 역할 기본 지시 뒤에 붙음)</label>
     <textarea id="p" rows="3" bind:value={editing.prompt} placeholder="예: 주석과 커밋 설명은 한국어로 쓴다"></textarea>
     <div class="actions">
@@ -160,7 +174,7 @@
       <div class="row acct">
         <div>
           <span class="dot" class:ok={e.status?.loggedIn}></span>
-          <span>{e.connection === 'own' ? '전용 계정' : '이 PC 기본 로그인'} — {statusText(e)}</span>
+          <span>{e.connection === 'own' ? '전용 계정' : e.connection === 'ollama' ? 'Ollama(이 PC)' : '이 PC 기본 로그인'} — {statusText(e)}</span>
         </div>
         {#if e.connection === 'own'}
           <div class="btns">
@@ -214,7 +228,7 @@
   .dot.ok { background: var(--green); }
   .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
   .lbl { display: block; color: var(--muted); font-size: 12px; margin: 14px 0 6px; }
-  .conn { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .conn { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
   .conn button { text-align: left; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; }
   .conn span { color: var(--muted); font-size: 12px; }
   .conn button.on { border-color: var(--accent); background: rgba(232, 135, 95, .1); }

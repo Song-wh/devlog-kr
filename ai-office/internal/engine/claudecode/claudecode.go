@@ -112,6 +112,12 @@ func (e *Engine) Run(ctx context.Context, spec engine.Spec, onEvent func(engine.
 	if spec.ProfileDir != "" {
 		cmd.Env = ProfileEnv(spec.ProfileDir)
 	}
+	if len(spec.Env) > 0 {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		cmd.Env = append(cmd.Env, spec.Env...)
+	}
 	cmd.Stderr = errLog
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/song-circle/devlog-kr/ai-office/internal/engine/claudecode"
+	"github.com/song-circle/devlog-kr/ai-office/internal/ollama"
 	"github.com/song-circle/devlog-kr/ai-office/internal/orchestrator"
 	"github.com/song-circle/devlog-kr/ai-office/internal/store"
 )
@@ -31,8 +32,14 @@ func (a *App) profileDir(id int64) string {
 
 func (a *App) agentFor(e store.Employee) orchestrator.Agent {
 	ag := orchestrator.Agent{Name: e.Name, Model: e.Model, Prompt: e.Prompt}
-	if e.Connection == store.ConnOwn {
+	switch e.Connection {
+	case store.ConnOwn:
 		ag.ProfileDir = a.profileDir(e.ID)
+	case store.ConnOllama:
+		// Its own (empty) profile, so no Claude login is used, and every
+		// request goes to the local Ollama server.
+		ag.ProfileDir = a.profileDir(e.ID)
+		ag.Env = ollama.Env(e.Model)
 	}
 	return ag
 }
@@ -49,6 +56,8 @@ func (a *App) Employees() ([]EmployeeView, error) {
 	out := make([]EmployeeView, len(es))
 	var defaultStatus claudecode.AuthStatus
 	var once sync.Once
+	var local ollama.Status
+	var localOnce sync.Once
 	var wg sync.WaitGroup
 	for i, e := range es {
 		out[i].Employee = e
@@ -58,6 +67,11 @@ func (a *App) Employees() ([]EmployeeView, error) {
 		wg.Add(1)
 		go func(i int, e store.Employee) {
 			defer wg.Done()
+			if e.Connection == store.ConnOllama {
+				localOnce.Do(func() { local = ollama.Check(context.Background()) })
+				out[i].Status = ollamaStatus(local, e.Model)
+				return
+			}
 			if e.Connection == store.ConnOwn {
 				out[i].Status = claudecode.Status(context.Background(), a.profileDir(e.ID))
 				return
@@ -84,6 +98,20 @@ func (a *App) DeleteEmployee(id int64) error {
 		return err
 	}
 	return a.st.DeleteEmployee(id)
+}
+
+// Ollama reports the local server and its installed models.
+func (a *App) Ollama() ollama.Status { return ollama.Check(context.Background()) }
+
+// ollamaStatus shows a local-model employee in the same shape as an account.
+func ollamaStatus(s ollama.Status, model string) claudecode.AuthStatus {
+	switch {
+	case !s.Running:
+		return claudecode.AuthStatus{AuthMethod: "ollama", Error: s.Error}
+	case !s.Has(model):
+		return claudecode.AuthStatus{AuthMethod: "ollama", Error: "모델이 설치되어 있지 않습니다: " + model + " (ollama pull " + model + ")"}
+	}
+	return claudecode.AuthStatus{LoggedIn: true, AuthMethod: "ollama", Plan: "Ollama " + s.Version}
 }
 
 // Login starts the official Claude Code sign-in for an employee with its own

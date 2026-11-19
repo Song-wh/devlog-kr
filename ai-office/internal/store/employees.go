@@ -10,6 +10,7 @@ import (
 const (
 	ConnDefault = "default" // the Claude Code login already on this PC
 	ConnOwn     = "own"     // the employee's own login, kept in its own profile folder
+	ConnOllama  = "ollama"  // a model served by Ollama on this PC (no account, nothing leaves the PC)
 )
 
 // Employee is one AI worker: a role, an engine account and a model.
@@ -52,7 +53,7 @@ func (e *Employee) validate() error {
 	if e.Model == "" {
 		e.Model = "sonnet"
 	}
-	if e.Connection != ConnOwn {
+	if e.Connection != ConnOwn && e.Connection != ConnOllama {
 		e.Connection = ConnDefault
 	}
 	if e.AuthMode != "console" {

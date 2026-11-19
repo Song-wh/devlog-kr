@@ -54,6 +54,10 @@ export function Models() {
   return window['go']['main']['App']['Models']();
 }
 
+export function Ollama() {
+  return window['go']['main']['App']['Ollama']();
+}
+
 export function PickFolder() {
   return window['go']['main']['App']['PickFolder']();
 }

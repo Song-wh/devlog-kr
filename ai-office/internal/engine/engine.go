@@ -20,6 +20,7 @@ type Spec struct {
 	SystemPrompt string        // role instructions appended to the engine's own
 	JSONSchema   string        // if set, the final answer must match this schema
 	ProfileDir   string        // engine account folder (own login); empty = the PC's default login
+	Env          []string      // extra environment, e.g. pointing the engine at a local model server
 }
 
 // EventKind tells what an Event carries.

@@ -14,6 +14,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/song-circle/devlog-kr/ai-office/internal/engine/claudecode"
+	"github.com/song-circle/devlog-kr/ai-office/internal/ollama"
 	"github.com/song-circle/devlog-kr/ai-office/internal/orchestrator"
 	"github.com/song-circle/devlog-kr/ai-office/internal/report"
 	"github.com/song-circle/devlog-kr/ai-office/internal/store"
@@ -222,6 +223,11 @@ func (a *App) Start(in StartInput) (string, error) {
 		if e.Connection == store.ConnOwn {
 			if s := claudecode.Status(context.Background(), a.profileDir(e.ID)); !s.LoggedIn {
 				return orchestrator.Agent{}, fmt.Errorf("%s 직원이 로그인되어 있지 않습니다. 직원 화면에서 로그인하세요", e.Name)
+			}
+		}
+		if e.Connection == store.ConnOllama {
+			if s := ollamaStatus(ollama.Check(context.Background()), e.Model); !s.LoggedIn {
+				return orchestrator.Agent{}, fmt.Errorf("%s 직원(Ollama)을 쓸 수 없습니다: %s", e.Name, s.Error)
 			}
 		}
 		return a.agentFor(e), nil

@@ -87,10 +87,11 @@ func (c *Config) mode() string {
 // Agent is the employee doing a role: which account, which model, and any
 // extra instructions on top of the role's own.
 type Agent struct {
-	Name       string `json:"name"`
-	Model      string `json:"model"`
-	ProfileDir string `json:"-"` // engine account folder; empty = default login
-	Prompt     string `json:"prompt,omitempty"`
+	Name       string   `json:"name"`
+	Model      string   `json:"model"`
+	ProfileDir string   `json:"-"` // engine account folder; empty = default login
+	Prompt     string   `json:"prompt,omitempty"`
+	Env        []string `json:"-"` // extra engine environment (local model server)
 }
 
 // NewID returns a request id: local time to the millisecond, usable in a
@@ -369,7 +370,7 @@ func (r *run) runAgent(ctx context.Context, taskID int64, role string, ag Agent,
 	spec := engine.Spec{
 		Prompt: prompt, Dir: r.wt.Dir, Model: model, MaxBudgetUSD: remaining,
 		Timeout: r.cfg.TaskTimeout, LogDir: logDir, SystemPrompt: system, JSONSchema: schema,
-		ProfileDir: ag.ProfileDir,
+		ProfileDir: ag.ProfileDir, Env: ag.Env,
 	}
 	if role != "dev" || ReadOnly(r.cfg.Mode) {
 		spec.Tools = []string{"Read", "Glob", "Grep"} // planners, reviewers and read-only modes only read

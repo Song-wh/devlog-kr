@@ -82,7 +82,8 @@
   }
 
   const account = (e: main.EmployeeView) =>
-    e.connection === 'own' ? (e.status?.loggedIn ? '전용 계정' : '전용 계정 · 로그인 필요') : '기본 로그인'
+    e.connection === 'ollama' ? (e.status?.loggedIn ? 'Ollama' : 'Ollama · 사용 불가')
+      : e.connection === 'own' ? (e.status?.loggedIn ? '전용 계정' : '전용 계정 · 로그인 필요') : '기본 로그인'
 </script>
 
 <h1>새 요청</h1>
