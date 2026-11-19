@@ -68,6 +68,7 @@ const preamble = "너는 소프트웨어 팀의 직원이다. 프로젝트 폴�
 type message struct {
 	Role      string     `json:"role"`
 	Content   string     `json:"content"`
+	Thinking  string     `json:"thinking,omitempty"` // reasoning models; not sent back
 	ToolCalls []toolCall `json:"tool_calls,omitempty"`
 	ToolName  string     `json:"tool_name,omitempty"`
 }
@@ -83,6 +84,7 @@ type chatResponse struct {
 	Message         message `json:"message"`
 	PromptEvalCount int64   `json:"prompt_eval_count"`
 	EvalCount       int64   `json:"eval_count"`
+	DoneReason      string  `json:"done_reason"` // "length" = hit the output cap
 	Error           string  `json:"error"`
 }
 
@@ -183,9 +185,12 @@ func (e *Engine) Run(ctx context.Context, spec engine.Spec, onEvent func(engine.
 		}
 	}
 	answer = stripThinking(answer)
-	if strings.TrimSpace(answer) != "" {
-		onEvent(engine.Event{Time: time.Now(), Kind: engine.EventText, Text: answer})
+	if strings.TrimSpace(answer) == "" {
+		// An empty answer is a failure, not something for others to review
+		// (gpt-oss spent its whole output budget thinking and returned "").
+		return fail(errors.New("빈 답(모델이 답을 쓰지 못함)"))
 	}
+	onEvent(engine.Event{Time: time.Now(), Kind: engine.EventText, Text: answer})
 
 	if spec.JSONSchema != "" {
 		// Second step: the same conversation, answer reshaped into the
@@ -222,22 +227,55 @@ func (e *Engine) Run(ctx context.Context, spec engine.Spec, onEvent func(engine.
 // generating (llama3.1 ran 14 minutes on the JSON step), so every call has
 // a token limit and its own time limit.
 const (
-	maxAnswerTokens = 2048
+	maxAnswerTokens = 4096 // reasoning models think inside this budget too
 	maxFormatTokens = 1024
-	callTimeout     = 4 * time.Minute
+	callTimeout     = 5 * time.Minute
 	formatTimeout   = 2 * time.Minute
 )
 
+// chat makes one model call. If the answer came back empty because the
+// output cap was spent on thinking, it asks once more with a larger cap; if
+// Ollama's model runner crashed (it restarts on the next request), it waits
+// a moment and tries once more.
 func chat(ctx context.Context, model string, msgs []message, withTools bool, format map[string]any) (*chatResponse, error) {
-	opts := map[string]any{"num_ctx": 16384, "num_predict": maxAnswerTokens}
+	predict := maxAnswerTokens
+	if format != nil {
+		predict = maxFormatTokens
+	}
+	r, err := chatOnce(ctx, model, msgs, withTools, format, predict)
+	if err != nil && crashed(err) && ctx.Err() == nil {
+		select {
+		case <-time.After(5 * time.Second):
+		case <-ctx.Done():
+			return nil, err
+		}
+		r, err = chatOnce(ctx, model, msgs, withTools, format, predict)
+	}
+	if err == nil && format == nil && strings.TrimSpace(r.Message.Content) == "" && len(r.Message.ToolCalls) == 0 && r.DoneReason == "length" {
+		r, err = chatOnce(ctx, model, msgs, withTools, format, predict*2)
+	}
+	return r, err
+}
+
+// crashed reports an Ollama runner failure worth one retry.
+func crashed(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "process has terminated") || strings.Contains(s, "EOF") ||
+		strings.Contains(s, "connection reset") || strings.Contains(s, "forcibly closed")
+}
+
+func chatOnce(ctx context.Context, model string, msgs []message, withTools bool, format map[string]any, predict int) (*chatResponse, error) {
+	opts := map[string]any{"num_ctx": 16384, "num_predict": predict}
 	limit := callTimeout
 	body := map[string]any{"model": model, "messages": msgs, "stream": false, "options": opts}
+	if strings.HasPrefix(model, "gpt-oss") {
+		body["think"] = "low" // its reasoning level; "low" leaves room for the answer
+	}
 	if withTools {
 		body["tools"] = tools
 	}
 	if format != nil {
 		body["format"] = format
-		opts["num_predict"] = maxFormatTokens
 		limit = formatTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, limit)

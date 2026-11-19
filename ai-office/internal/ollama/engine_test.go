@@ -124,3 +124,35 @@ func TestReadFileByNameOnly(t *testing.T) {
 		t.Error("missing file accepted")
 	}
 }
+
+// A reasoning model that spends the whole budget thinking returns "": the
+// engine asks once more with a larger budget, and an answer that stays empty
+// is a failure (bug 014: gpt-oss handed an empty draft to the reviewers).
+func TestEmptyAnswerRetriedThenFails(t *testing.T) {
+	for _, recovers := range []bool{true, false} {
+		var predicts []float64
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			predicts = append(predicts, body["options"].(map[string]any)["num_predict"].(float64))
+			msg := map[string]any{"role": "assistant", "content": "", "thinking": "음..."}
+			if recovers && len(predicts) == 2 {
+				msg["content"] = "다 생각했다"
+			}
+			json.NewEncoder(w).Encode(map[string]any{"message": msg, "done_reason": "length"})
+		}))
+		t.Setenv("OLLAMA_HOST", srv.URL)
+		res, _ := (&Engine{MaxTurns: 1}).Run(context.Background(), engine.Spec{Prompt: "x", Dir: t.TempDir(), Model: "gpt-oss:20b",
+			Tools: []string{"Read"}, LogDir: filepath.Join(t.TempDir(), "log")}, nil)
+		srv.Close()
+		if len(predicts) < 2 || predicts[1] != 2*predicts[0] {
+			t.Errorf("recovers=%v: num_predict sequence %v", recovers, predicts)
+		}
+		if recovers && (res.Status != engine.StatusSuccess || res.Text != "다 생각했다") {
+			t.Errorf("recovered: %+v", res)
+		}
+		if !recovers && res.Status != engine.StatusError {
+			t.Errorf("still empty should fail: %+v", res)
+		}
+	}
+}
