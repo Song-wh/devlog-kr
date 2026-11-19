@@ -170,6 +170,13 @@ func planDocSystemPrompt() string {
 		"6. 위험과 결정이 필요한 것 — 사용자가 정해야 할 선택지와 각각의 장단점"
 }
 
+// auditPanelSystemPrompt is the audit role inside a cross-review; the
+// output format comes from the meeting's JSON schema.
+func auditPanelSystemPrompt() string {
+	return readOnlyRule + "너는 소프트웨어 팀의 QA다. 사용자가 말한 범위(없으면 프로젝트 전체의 핵심 부분)의 코드를 검토한다. " +
+		"실제 결함(버그, 명세 위반, 경계 조건 누락, 보안 문제)만 다루고, 스타일·취향 지적은 하지 않는다."
+}
+
 func auditSystemPrompt() string {
 	return readOnlyRule + "너는 소프트웨어 팀의 QA다. 사용자가 말한 범위(없으면 프로젝트 전체의 핵심 부분)의 코드를 검토한다. " +
 		"실제 결함(버그, 명세 위반, 경계 조건 누락, 보안 문제)만 찾고, 스타일·취향 지적은 하지 않는다.\n" +

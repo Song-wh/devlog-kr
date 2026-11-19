@@ -46,6 +46,9 @@ func run() int {
 		solo        = flag.Bool("solo", false, "no PM: the developer gets the request as one task")
 		reviewFlag  = flag.Bool("review", true, "after checks pass, a QA agent reviews the diff (team mode)")
 		qaModel     = flag.String("qa-model", "", "model for the QA reviewer (default: dev model)")
+		mode        = flag.String("mode", "", "ask / plan / audit (read only) or solo / team / review; overrides -solo and -review")
+		panel       = flag.String("review-panel", "", "cross-review panel, e.g. \"QA1:sonnet,QA2:opus,QA3:sonnet\" (review stage needs 2+, audit 1+)")
+		notes       = flag.String("notes", "", "project notes given to every employee")
 		dataDir     = flag.String("data", defaultDataDir(), "worktrees, logs and database")
 	)
 	flag.Var(&checks, "check", "check command run in the worktree (repeatable); all must pass")
@@ -100,6 +103,7 @@ func run() int {
 		Repo: *repo, Request: text, Checks: checks, Protect: protect,
 		PMModel: *pmModel, DevModel: *devModel, MaxFixRounds: *fixRounds, BudgetUSD: *budget,
 		TaskTimeout: *taskTO, CheckTimeout: *checkTO, Solo: *solo, Review: *reviewFlag, QAModel: *qaModel,
+		Mode: *mode, ProjectNotes: *notes, Panels: panels(*panel),
 	})
 	if err != nil {
 		return fail(err)
@@ -121,6 +125,25 @@ func run() int {
 		return 0
 	}
 	return 1
+}
+
+// panels parses "Name:model,Name:model" into a review panel.
+func panels(spec string) map[string][]orchestrator.Agent {
+	if strings.TrimSpace(spec) == "" {
+		return nil
+	}
+	var p []orchestrator.Agent
+	for _, part := range strings.Split(spec, ",") {
+		name, model, _ := strings.Cut(strings.TrimSpace(part), ":")
+		if name == "" {
+			continue
+		}
+		if model == "" {
+			model = "sonnet"
+		}
+		p = append(p, orchestrator.Agent{Name: name, Model: model})
+	}
+	return map[string][]orchestrator.Agent{"review": p}
 }
 
 func defaultDataDir() string {

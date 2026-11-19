@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/song-circle/devlog-kr/ai-office/internal/check"
@@ -46,6 +47,9 @@ type Config struct {
 	// (stack, rules, background) are added to every employee's instructions.
 	ProjectID    int64  `json:"project_id,omitempty"`
 	ProjectNotes string `json:"project_notes,omitempty"`
+	// Panels hold meetings instead of single employees: "review" (QA review
+	// stage and the audit mode) is a cross-review when it has 2+ members.
+	Panels map[string][]Agent `json:"panels,omitempty"`
 }
 
 // Modes.
@@ -113,12 +117,14 @@ type Outcome struct {
 var errBudget = errors.New("budget exhausted")
 
 type run struct {
-	o     *Orchestrator
-	cfg   Config
-	id    string
-	wt    *workspace.Worktree
-	dir   string
-	runNo int
+	o        *Orchestrator
+	cfg      Config
+	id       string
+	wt       *workspace.Worktree
+	dir      string
+	mu       sync.Mutex // guards runNo (meeting members run in parallel)
+	runNo    int
+	meetings []int64
 }
 
 // Run executes one request to the end and returns its outcome.
@@ -242,7 +248,21 @@ func (r *run) execute(ctx context.Context) (string, string) {
 			return store.ReqFailed, err.Error()
 		}
 		if failures == "" && r.cfg.Review && !r.cfg.Solo {
-			if failures, err = r.review(ctx, round); err != nil {
+			if panel := r.cfg.Panels["review"]; len(panel) >= 2 {
+				diff, derr := r.wt.Diff()
+				if derr != nil {
+					return store.ReqFailed, derr.Error()
+				}
+				if len(diff) > maxReviewDiff {
+					diff = diff[:maxReviewDiff] + "\n... (diff truncated; read the files for the rest)"
+				}
+				cr, cerr := r.crossReview(ctx, panel, fmt.Sprintf("QA 교차 검토 %d회차", round+1),
+					reviewPrompt(r.cfg.Request, diff), reviewSystemPrompt(r.cfg.Checks, r.cfg.Protect))
+				if cerr != nil {
+					return store.ReqFailed, "review: " + cerr.Error()
+				}
+				failures = failuresFrom(cr)
+			} else if failures, err = r.review(ctx, round); err != nil {
 				return store.ReqFailed, "review: " + err.Error()
 			}
 		}
@@ -298,8 +318,15 @@ func (r *run) plan(ctx context.Context) (*plan, error) {
 	return &p, nil
 }
 
-// runTask runs the engine once for a task and records everything.
+// runTask runs the engine once for a task (as the employee assigned to the
+// role) and records everything.
 func (r *run) runTask(ctx context.Context, taskID int64, role, model, prompt, system, schema string) (engine.Result, error) {
+	return r.runAgent(ctx, taskID, role, r.cfg.Agents[role], model, prompt, system, schema, true)
+}
+
+// runAgent runs one employee once. manageTask=false leaves the task's status
+// alone (a meeting is one task with many statements).
+func (r *run) runAgent(ctx context.Context, taskID int64, role string, ag Agent, model, prompt, system, schema string, manageTask bool) (engine.Result, error) {
 	st := r.o.Store
 	spent, _ := st.CostSoFar(r.id)
 	remaining := r.cfg.BudgetUSD - spent
@@ -307,7 +334,6 @@ func (r *run) runTask(ctx context.Context, taskID int64, role, model, prompt, sy
 		st.SetTaskStatus(taskID, store.Failed, "budget exhausted")
 		return engine.Result{}, errBudget
 	}
-	ag := r.cfg.Agents[role]
 	if ag.Model != "" {
 		model = ag.Model
 	}
@@ -321,10 +347,14 @@ func (r *run) runTask(ctx context.Context, taskID int64, role, model, prompt, sy
 	if ag.Name != "" {
 		who = ag.Name
 	}
-	st.SetTaskStatus(taskID, store.Assigned, who)
-	st.SetTaskStatus(taskID, store.InProgress, "")
+	if manageTask {
+		st.SetTaskStatus(taskID, store.Assigned, who)
+		st.SetTaskStatus(taskID, store.InProgress, "")
+	}
+	r.mu.Lock()
 	r.runNo++
 	logDir := filepath.Join(r.dir, fmt.Sprintf("%02d-%s", r.runNo, role))
+	r.mu.Unlock()
 	spec := engine.Spec{
 		Prompt: prompt, Dir: r.wt.Dir, Model: model, MaxBudgetUSD: remaining,
 		Timeout: r.cfg.TaskTimeout, LogDir: logDir, SystemPrompt: system, JSONSchema: schema,
@@ -350,8 +380,14 @@ func (r *run) runTask(ctx context.Context, taskID int64, role, model, prompt, sy
 		CostUSD: res.Usage.CostUSD, CostEstimated: res.Usage.CostEstimated, Agent: ag.Name,
 		Duration: res.Duration, LogDir: logDir, ResultText: res.Text, StartedAt: start,
 	})
-	r.o.log(role, fmt.Sprintf("done: %s, %.0fs, $%.4f", res.Status, res.Duration.Seconds(), res.Usage.CostUSD))
-	st.SetTaskResult(taskID, 1, res.Text)
+	who = role
+	if ag.Name != "" && !manageTask {
+		who = ag.Name // in meetings, tell the speakers apart
+	}
+	r.o.log(who, fmt.Sprintf("done: %s, %.0fs, $%.4f", res.Status, res.Duration.Seconds(), res.Usage.CostUSD))
+	if manageTask {
+		st.SetTaskResult(taskID, 1, res.Text)
+	}
 	if runErr != nil {
 		st.SetTaskStatus(taskID, store.Failed, runErr.Error())
 		return res, runErr
@@ -422,6 +458,21 @@ func (r *run) answer(ctx context.Context) (string, string) {
 		role, title, system = "pm", "기획", planDocSystemPrompt()
 	case ModeAudit:
 		role, title, system = "qa", "코드 검토", auditSystemPrompt()
+	}
+	if panel := r.cfg.Panels["review"]; r.cfg.Mode == ModeAudit && len(panel) >= 1 {
+		cr, err := r.crossReview(ctx, panel, "교차 검토", "사용자 요청(검토 범위):\n"+r.cfg.Request, auditPanelSystemPrompt())
+		if err != nil {
+			return store.ReqFailed, err.Error()
+		}
+		md := cr.markdown(panel)
+		taskID, err := r.o.Store.AddTask(r.id, 300, "answer", "qa", "교차 검토 결과", r.cfg.Request)
+		if err != nil {
+			return store.ReqFailed, err.Error()
+		}
+		r.o.Store.SetTaskResult(taskID, 0, md)
+		r.o.Store.SetTaskStatus(taskID, store.Completed, "")
+		os.WriteFile(filepath.Join(r.dir, "answer.md"), []byte(md), 0o644)
+		return store.ReqDone, ""
 	}
 	model := r.cfg.DevModel
 	if role == "pm" && r.cfg.PMModel != "" {
