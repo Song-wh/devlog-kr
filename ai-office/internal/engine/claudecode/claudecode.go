@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Song-wh/devlog-kr/ai-office/internal/engine"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/proc"
+	"github.com/song-circle/devlog-kr/ai-office/internal/engine"
+	"github.com/song-circle/devlog-kr/ai-office/internal/proc"
 )
 
 // Engine runs the claude CLI.

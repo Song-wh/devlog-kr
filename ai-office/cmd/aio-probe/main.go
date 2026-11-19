@@ -20,10 +20,10 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/Song-wh/devlog-kr/ai-office/internal/engine"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/engine/claudecode"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/proc"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/workspace"
+	"github.com/song-circle/devlog-kr/ai-office/internal/engine"
+	"github.com/song-circle/devlog-kr/ai-office/internal/engine/claudecode"
+	"github.com/song-circle/devlog-kr/ai-office/internal/proc"
+	"github.com/song-circle/devlog-kr/ai-office/internal/workspace"
 )
 
 type summary struct {

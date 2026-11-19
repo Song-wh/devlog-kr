@@ -13,11 +13,11 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/Song-wh/devlog-kr/ai-office/internal/engine/claudecode"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/orchestrator"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/report"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/store"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/workspace"
+	"github.com/song-circle/devlog-kr/ai-office/internal/engine/claudecode"
+	"github.com/song-circle/devlog-kr/ai-office/internal/orchestrator"
+	"github.com/song-circle/devlog-kr/ai-office/internal/report"
+	"github.com/song-circle/devlog-kr/ai-office/internal/store"
+	"github.com/song-circle/devlog-kr/ai-office/internal/workspace"
 )
 
 // App is bound to the frontend. Every method does real work on the local

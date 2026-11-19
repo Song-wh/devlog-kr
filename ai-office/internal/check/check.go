@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Song-wh/devlog-kr/ai-office/internal/proc"
+	"github.com/song-circle/devlog-kr/ai-office/internal/proc"
 )
 
 // Result of one check run.

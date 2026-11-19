@@ -9,9 +9,9 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/Song-wh/devlog-kr/ai-office/internal/engine/claudecode"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/orchestrator"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/store"
+	"github.com/song-circle/devlog-kr/ai-office/internal/engine/claudecode"
+	"github.com/song-circle/devlog-kr/ai-office/internal/orchestrator"
+	"github.com/song-circle/devlog-kr/ai-office/internal/store"
 )
 
 // EmployeeView is an employee with the live state of its account.

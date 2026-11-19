@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Song-wh/devlog-kr/ai-office/internal/check"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/engine"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/store"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/workspace"
+	"github.com/song-circle/devlog-kr/ai-office/internal/check"
+	"github.com/song-circle/devlog-kr/ai-office/internal/engine"
+	"github.com/song-circle/devlog-kr/ai-office/internal/store"
+	"github.com/song-circle/devlog-kr/ai-office/internal/workspace"
 )
 
 // Config for one request.

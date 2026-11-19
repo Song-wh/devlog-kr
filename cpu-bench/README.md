@@ -4,7 +4,7 @@ Windows PC용 무료 진단형 CPU 벤치마크. 점수만 보여 주는 게 아
 
 ## 내려받기
 
-**[최신 버전 받기 (Releases)](https://github.com/Song-wh/devlog-kr/releases?q=cpu-bench)** — `cpu-bench-<버전>-win-x64.zip`을 받아 압축을 풀고 `cpu-bench.exe`를 실행하면 됩니다. 설치는 필요 없습니다(Windows 10/11 x64).
+**[최신 버전 받기 (Releases)](https://github.com/song-circle/devlog-kr/releases?q=cpu-bench)** — `cpu-bench-<버전>-win-x64.zip`을 받아 압축을 풀고 `cpu-bench.exe`를 실행하면 됩니다. 설치는 필요 없습니다(Windows 10/11 x64).
 
 - 아직 코드 서명 인증서가 없는 초기 버전이라 처음 실행할 때 "Windows의 PC 보호" 창이 뜹니다. **[추가 정보] → [실행]**을 누르세요. 받은 파일이 원본인지는 릴리스 페이지의 SHA-256 값으로 확인할 수 있습니다.
 - PC 측정 결과는 이 PC에만 저장하고 어디에도 보내지 않습니다. 켤 때 GitHub에 최신 버전 번호만 물어보고, 새 버전이 있으면 알려 줍니다(화면 아래에서 끌 수 있음).

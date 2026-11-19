@@ -42,8 +42,8 @@ LICENSE.txt            MIT 라이선스
 
 새 버전 / 문의
 --------------
-- 새 버전: https://github.com/Song-wh/devlog-kr/releases
-- 버그 신고·기능 요청: https://github.com/Song-wh/devlog-kr/issues
+- 새 버전: https://github.com/song-circle/devlog-kr/releases
+- 버그 신고·기능 요청: https://github.com/song-circle/devlog-kr/issues
 - 개발 과정 영상: https://www.youtube.com/@buglog_kr
 
-MIT 라이선스로 공개된 무료 프로그램입니다. 코드: https://github.com/Song-wh/devlog-kr
+MIT 라이선스로 공개된 무료 프로그램입니다. 코드: https://github.com/song-circle/devlog-kr

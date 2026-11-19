@@ -11,7 +11,7 @@ namespace CpuBench.App;
 public static class UpdateCheck
 {
     public const string TagPrefix = "cpu-bench-v";
-    private const string ReleasesUrl = "https://api.github.com/repos/Song-wh/devlog-kr/releases?per_page=50";
+    private const string ReleasesUrl = "https://api.github.com/repos/song-circle/devlog-kr/releases?per_page=50";
 
     public sealed record Release(Version Version, string Tag, string Url);
 
@@ -57,7 +57,7 @@ public static class UpdateCheck
             if (!Version.TryParse(tag[TagPrefix.Length..], out var v)) continue;
             v = new Version(v.Major, v.Minor, Math.Max(v.Build, 0));
             if (v <= current || (best != null && v <= best.Version)) continue;
-            string url = r.TryGetProperty("html_url", out var u) && u.GetString() is string s ? s : "https://github.com/Song-wh/devlog-kr/releases";
+            string url = r.TryGetProperty("html_url", out var u) && u.GetString() is string s ? s : "https://github.com/song-circle/devlog-kr/releases";
             best = new Release(v, tag, url);
         }
         return best;

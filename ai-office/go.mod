@@ -1,4 +1,4 @@
-module github.com/Song-wh/devlog-kr/ai-office
+module github.com/song-circle/devlog-kr/ai-office
 
 go 1.27.0
 

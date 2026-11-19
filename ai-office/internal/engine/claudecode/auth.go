@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Song-wh/devlog-kr/ai-office/internal/proc"
+	"github.com/song-circle/devlog-kr/ai-office/internal/proc"
 )
 
 // ProfileEnv is the environment for running Claude Code with its own

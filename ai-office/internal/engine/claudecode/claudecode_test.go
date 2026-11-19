@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/Song-wh/devlog-kr/ai-office/internal/engine"
+	"github.com/song-circle/devlog-kr/ai-office/internal/engine"
 )
 
 func TestParseStream(t *testing.T) {

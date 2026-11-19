@@ -18,10 +18,10 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/Song-wh/devlog-kr/ai-office/internal/engine/claudecode"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/orchestrator"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/report"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/store"
+	"github.com/song-circle/devlog-kr/ai-office/internal/engine/claudecode"
+	"github.com/song-circle/devlog-kr/ai-office/internal/orchestrator"
+	"github.com/song-circle/devlog-kr/ai-office/internal/report"
+	"github.com/song-circle/devlog-kr/ai-office/internal/store"
 )
 
 type multiFlag []string

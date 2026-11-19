@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Song-wh/devlog-kr/ai-office/internal/engine"
-	"github.com/Song-wh/devlog-kr/ai-office/internal/store"
+	"github.com/song-circle/devlog-kr/ai-office/internal/engine"
+	"github.com/song-circle/devlog-kr/ai-office/internal/store"
 )
 
 // fakeEngine plays the PM, the developer and the reviewer from a script.
