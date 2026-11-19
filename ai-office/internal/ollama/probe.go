@@ -54,7 +54,7 @@ func probe(ctx context.Context, model, profileDir string, timeout time.Duration,
 	os.MkdirAll(profileDir, 0o755)
 
 	out, err := eng.Run(ctx, engine.Spec{
-		Prompt:     "note.txt 파일을 Read 도구로 읽고, 그 안의 비밀 단어를 word에 넣어 답해.",
+		Prompt:     "note.txt 파일을 도구로 직접 읽고, 그 안의 비밀 단어를 word에 넣어 답해.",
 		Dir:        dir,
 		Model:      model,
 		Tools:      []string{"Read", "Glob", "Grep"},
