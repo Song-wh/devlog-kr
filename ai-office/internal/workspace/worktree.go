@@ -113,6 +113,27 @@ func (w *Worktree) Commit(message string) error {
 	return err
 }
 
+// MergeInto merges branch into whatever is checked out in repo. On a conflict
+// the merge is aborted so the user's folder is left as it was.
+func MergeInto(repo, branch, message string) error {
+	if _, err := git(repo, "merge", "--no-ff", "-m", message, branch); err != nil {
+		git(repo, "merge", "--abort")
+		return err
+	}
+	return nil
+}
+
+// Open describes an existing worktree from its stored fields.
+func Open(repo, dir, branch, base string) *Worktree {
+	return &Worktree{Repo: repo, Dir: dir, Branch: branch, Base: base}
+}
+
+// DiffBranch is the committed change of the branch against its base
+// (works after the worktree is gone, as long as the branch exists).
+func DiffBranch(repo, base, branch string) (string, error) {
+	return git(repo, "diff", base+".."+branch)
+}
+
 // DiffStat summarizes the branch against its base.
 func (w *Worktree) DiffStat() (string, error) {
 	return git(w.Dir, "diff", "--stat", w.Base)

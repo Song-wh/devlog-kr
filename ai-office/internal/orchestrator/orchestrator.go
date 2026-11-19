@@ -22,6 +22,7 @@ import (
 
 // Config for one request.
 type Config struct {
+	ID           string        `json:"-"` // request id; empty = NewID()
 	Repo         string        `json:"repo"`
 	Request      string        `json:"request"`
 	Checks       []string      `json:"checks"`         // user-defined commands; all must pass
@@ -35,6 +36,13 @@ type Config struct {
 	Solo         bool          `json:"solo"`     // skip the PM: one task = the request itself
 	Review       bool          `json:"review"`   // after checks pass, a QA agent reviews the diff (team mode only)
 	QAModel      string        `json:"qa_model"` // engine model for the reviewer (default: DevModel)
+}
+
+// NewID returns a request id: local time to the millisecond, usable in a
+// branch name and a folder name.
+func NewID() string {
+	t := time.Now()
+	return t.Format("20060102-150405") + fmt.Sprintf("-%03d", t.Nanosecond()/1e6)
 }
 
 // Logger receives progress lines for display.
@@ -70,13 +78,34 @@ type run struct {
 
 // Run executes one request to the end and returns its outcome.
 func (o *Orchestrator) Run(ctx context.Context, cfg Config) (*Outcome, error) {
+	p, err := o.Prepare(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return p.Execute(ctx)
+}
+
+// Prepared is a request whose worktree and database row already exist.
+type Prepared struct {
+	r *run
+}
+
+// ID of the prepared request.
+func (p *Prepared) ID() string { return p.r.id }
+
+// Prepare creates the worktree and records the request, so callers (the app)
+// can show it before any agent starts. Execute runs it.
+func (o *Orchestrator) Prepare(cfg Config) (*Prepared, error) {
 	if cfg.MaxFixRounds < 0 {
 		cfg.MaxFixRounds = 0
 	}
 	if cfg.BudgetUSD <= 0 {
 		cfg.BudgetUSD = 2
 	}
-	id := time.Now().Format("20060102-150405")
+	id := cfg.ID
+	if id == "" {
+		id = NewID()
+	}
 	wt, err := workspace.Create(cfg.Repo, filepath.Join(o.DataDir, "worktrees"), id)
 	if err != nil {
 		return nil, err
@@ -90,6 +119,12 @@ func (o *Orchestrator) Run(ctx context.Context, cfg Config) (*Outcome, error) {
 		Branch: wt.Branch, Base: wt.Base, ConfigJSON: string(cj)}); err != nil {
 		return nil, err
 	}
+	return &Prepared{r: r}, nil
+}
+
+// Execute runs a prepared request to the end.
+func (p *Prepared) Execute(ctx context.Context) (*Outcome, error) {
+	r, o, id, wt := p.r, p.r.o, p.r.id, p.r.wt
 	o.log("system", fmt.Sprintf("request %s  worktree %s  branch %s", id, wt.Dir, wt.Branch))
 
 	status, reason := r.execute(ctx)

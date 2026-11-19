@@ -105,6 +105,11 @@ CREATE TABLE IF NOT EXISTS checks (
 	log_path      TEXT NOT NULL,
 	at            TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+	key           TEXT PRIMARY KEY,
+	value         TEXT NOT NULL,
+	updated_at    TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS bench_runs (
 	id            INTEGER PRIMARY KEY AUTOINCREMENT,
 	bench_id      TEXT NOT NULL,
