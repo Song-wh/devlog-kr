@@ -32,6 +32,8 @@ const secret = "귤나무-4821"
 // Probe runs the test in a temporary folder. profileDir is an empty Claude
 // Code profile used for local runs.
 func Probe(ctx context.Context, model, profileDir string, timeout time.Duration) ProbeResult {
+	GPU.Lock()
+	defer GPU.Unlock()
 	res := ProbeResult{Model: model, At: time.Now().Format(time.RFC3339)}
 	dir, err := os.MkdirTemp("", "aio-probe-")
 	if err != nil {
@@ -77,6 +79,8 @@ func Probe(ctx context.Context, model, profileDir string, timeout time.Duration)
 		if res.Note == "" {
 			res.Note = "도구를 한 번도 호출하지 않음"
 		}
+	} else if !res.ReadFile && res.Note == "" {
+		res.Note = "도구는 불렀지만 파일 내용을 가져오지 못함"
 	}
 	return res
 }

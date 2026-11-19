@@ -17,6 +17,7 @@ import (
 
 	"github.com/song-circle/devlog-kr/ai-office/internal/check"
 	"github.com/song-circle/devlog-kr/ai-office/internal/engine"
+	"github.com/song-circle/devlog-kr/ai-office/internal/ollama"
 	"github.com/song-circle/devlog-kr/ai-office/internal/store"
 	"github.com/song-circle/devlog-kr/ai-office/internal/workspace"
 )
@@ -343,8 +344,8 @@ func (r *run) runAgent(ctx context.Context, taskID int64, role string, ag Agent,
 	if ag.Local {
 		// One graphics card: local models take turns. Running several at once
 		// makes Ollama swap them in and out until runs time out (bug 014).
-		localGPU.Lock()
-		defer localGPU.Unlock()
+		ollama.GPU.Lock()
+		defer ollama.GPU.Unlock()
 	}
 	st := r.o.Store
 	spent, _ := st.CostSoFar(r.id)

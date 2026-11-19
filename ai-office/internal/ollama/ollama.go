@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -22,6 +23,10 @@ func BaseURL() string {
 	}
 	return "http://localhost:11434"
 }
+
+// GPU is held by anything that runs a local model, so models take turns on
+// the one graphics card instead of being swapped in and out.
+var GPU sync.Mutex
 
 // Env makes Claude Code send its requests to Ollama with the given model.
 // Every model slot (main and the small helper model) is set to it, so no

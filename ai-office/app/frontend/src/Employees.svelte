@@ -19,6 +19,7 @@
     if (!r) return '시험 안 함'
     if (r.readFile && r.json) return `사용 가능 (${r.seconds.toFixed(0)}초)`
     if (!r.toolCalls) return '불가: 파일을 읽지 못함(도구 호출 안 함)'
+    if (!r.readFile) return '불가: 도구는 불렀지만 파일 내용을 가져오지 못함'
     if (!r.json) return '불안정: 정해진 형식으로 답하지 못함'
     return '불가: ' + (r.note ?? '')
   }

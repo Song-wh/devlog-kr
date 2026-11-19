@@ -6,13 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/song-circle/devlog-kr/ai-office/internal/engine"
 )
-
-// localGPU makes employees served by Ollama on this PC take turns.
-var localGPU sync.Mutex
 
 // skipMember handles one meeting member's failed statement. Problems that
 // concern everyone (budget, usage limit, the user stopping) end the
